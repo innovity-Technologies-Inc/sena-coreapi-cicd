@@ -140,7 +140,7 @@ pipeline {
             steps {
                         dir("${env.APP_BASE_DIR}") {
                             sh """ 
-                            docker build -t ${IMAGE_URL}:${IMAGE_TAG} -f ${DOCKERFILE_PATH}/${DOCKERFILE_SUFFIX} .
+                            docker build -t ${IMAGE_URL}:${IMAGE_TAG} .
                             docker tag ${IMAGE_URL}:${IMAGE_TAG} ${IMAGE_URL}:latest
                             """
                             //  trivy image --exit-code 1 ${DOCKER_REGISTRY}/composition:${IMAGE_TAG}                           
