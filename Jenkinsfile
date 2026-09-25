@@ -196,27 +196,27 @@ pipeline {
 
         // Deploy Using Ansible & Docker Compose 
 
-        stage('Deploy using Ansible') {
-            steps {
-                sh """
-                ansible-playbook \
-                  -i ansible/inventory/${DEPLOY_ENV}.ini \
-                  ansible/deploy-app.yml \
-                  -e image_tag=latest
-                """
-            }
-        }
+        // stage('Deploy using Ansible') {
+        //     steps {
+        //         sh """
+        //         ansible-playbook \
+        //           -i ansible/inventory/${DEPLOY_ENV}.ini \
+        //           ansible/deploy-app.yml \
+        //           -e image_tag=latest
+        //         """
+        //     }
+        // }
     }
-    post {
-        success {
-            echo "Deployment Successful to ${DEPLOY_ENV}"
-        }
-        failure {
-            echo "Deployment failed"
-        }
-        always {
-            junit '**/target/surefire-reports/*.xml'
-        }
-    }
-}
+    // post {
+    //     success {
+    //         echo "Deployment Successful to ${DEPLOY_ENV}"
+    //     }
+    //     failure {
+    //         echo "Deployment failed"
+    //     }
+    //     always {
+    //         junit '**/target/surefire-reports/*.xml'
+    //     }
+    // }
+
 
