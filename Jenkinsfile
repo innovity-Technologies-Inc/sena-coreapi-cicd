@@ -140,8 +140,8 @@ pipeline {
             steps {
                         dir("${env.APP_BASE_DIR}") {
                             sh """ 
-                            docker build -t ${IMAGE_URL}:${IMAGE_TAG} .
-                            docker tag ${IMAGE_URL}:${IMAGE_TAG} ${IMAGE_URL}:latest
+                            docker build -t ${IMAGE_URL}/${IMAGE_REPO}:${IMAGE_TAG} .
+                            docker tag ${IMAGE_URL}/${IMAGE_REPO}:${IMAGE_TAG} ${IMAGE_URL}/${IMAGE_REPO}:latest
                             """
                             //  trivy image --exit-code 1 ${DOCKER_REGISTRY}/composition:${IMAGE_TAG}                           
                         }
@@ -187,8 +187,8 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                     sh """
-                    docker push ${IMAGE_URL}:${IMAGE_TAG}
-                    docker push ${IMAGE_URL}/${IMAGE_URL}:latest
+                    docker push ${IMAGE_URL}/${IMAGE_REPO}:${IMAGE_TAG}
+                    docker push ${IMAGE_URL}/${IMAGE_REPO}:latest
                     """
                 }
             }
