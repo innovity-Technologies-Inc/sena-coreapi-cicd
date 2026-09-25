@@ -1,0 +1,13 @@
+# environment: prod
+DB_USER: cgw
+DB_PASSWORD: "#password#"
+DB_NAME: cgw
+DB_PORT: 5432
+docker_registry: zhddoc
+image_tag: latest
+compose_path: /opt/cgw
+COMPOSITION_PORT: 8087
+RENEWAL_PORT: 8081
+NOTIFICATION_PORT: 8082
+docker_username: zhddoc
+docker_password: "Zahid1982"

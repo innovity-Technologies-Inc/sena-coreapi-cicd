@@ -1,0 +1,42 @@
+- name: Render Docker Compose file 
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ compose_path }}/docker-compose.yml"
+
+- name: Copy multiple app files
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ compose_path }}/"
+    mode: '0644'
+  loop:
+    - .env
+
+- name: Authenticate with Harbor Registry via Docker
+  community.docker.docker_login:
+      registry_url: "{{ harbor_registry }}"
+      username: "{{ harbor_username }}"
+      password: "{{ harbor_password }}"
+  
+- name: Check docker-compose containers
+  command: docker compose ps -q
+  args:
+    chdir: "{{ compose_path }}"
+  register: compose_status
+  changed_when: false
+  failed_when: false
+    
+- name: Stop and Clean Running Containers 
+  command: docker compose down --remove-orphans 
+  args:
+    chdir: "{{ compose_path }}"
+  when: compose_status.stdout | length > 0
+    
+- name: Pull latest images 
+  command: docker compose pull 
+  args:
+    chdir: "{{ compose_path }}"
+    
+- name: Docker Containers Up
+  command: docker compose up -d 
+  args:
+    chdir: "{{ compose_path }}"

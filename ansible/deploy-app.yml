@@ -1,0 +1,10 @@
+- name:  Deploy Charging Gateway (Docker Compose)
+  hosts: app
+  become: true
+  serial: 1
+
+  #  vars_files:
+  #   - ../vault/docker.yml
+
+  roles:
+    - app
