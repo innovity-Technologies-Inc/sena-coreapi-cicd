@@ -16,7 +16,7 @@ pipeline {
         IMAGE_REPO = "senacoreapi/coreapi"
         // DOCKER_REGISTRY = "zhddoc"
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        DOCKERFILE_PATH = "docker"
+        DOCKERFILE_PATH = "core-api"
         DOCKERFILE_SUFFIX = "Dockerfile"
     }
 
@@ -121,22 +121,31 @@ pipeline {
         // }
 
         stage('Docker Image Build') {
+            // steps {
+            //     script {
+
+            //         docker_build(
+            //             env.IMAGE_URL,
+            //             env.IMAGE_REPO,
+            //             env.IMAGE_TAG
+            //         )
+
+            //         sh """
+            //         docker tag \
+            //         ${env.IMAGE_URL}/${env.IMAGE_REPO}:${env.IMAGE_TAG} \
+            //         ${env.IMAGE_URL}/${env.IMAGE_REPO}:latest
+            //         """
+            //     }
+            // }
             steps {
-                script {
-
-                    docker_build(
-                        env.IMAGE_URL,
-                        env.IMAGE_REPO,
-                        env.IMAGE_TAG
-                    )
-
-                    sh """
-                    docker tag \
-                    ${env.IMAGE_URL}/${env.IMAGE_REPO}:${env.IMAGE_TAG} \
-                    ${env.IMAGE_URL}/${env.IMAGE_REPO}:latest
-                    """
+                        dir("${env.APP_BASE_DIR}") {
+                            sh """ 
+                            docker build -t ${IMAGE_URL}:${IMAGE_TAG} -f ${DOCKERFILE_PATH}/${DOCKERFILE_SUFFIX} .
+                            docker tag ${IMAGE_URL}:${IMAGE_TAG} ${IMAGE_URL}:latest
+                            """
+                            //  trivy image --exit-code 1 ${DOCKER_REGISTRY}/composition:${IMAGE_TAG}                           
+                        }
                 }
-            }
         }
 
         stage('Harbor Login') {
