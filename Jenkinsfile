@@ -186,20 +186,12 @@ pipeline {
      // Docker push Images
         stage('Push Docker Image') {
             steps {
-                script {
-
-                    docker_push(
-                        env.IMAGE_URL,
-                        env.IMAGE_REPO,
-                        env.IMAGE_TAG
-                    )
-
                     sh """
-                    docker push ${env.IMAGE_URL}/${env.IMAGE_REPO}:latest
+                    docker push ${IMAGE_URL}:${IMAGE_TAG}
+                    docker push ${IMAGE_URL}/${IMAGE_URL}:latest
                     """
                 }
             }
-        }
 
     }
 
