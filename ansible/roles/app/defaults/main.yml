@@ -1,3 +1,8 @@
+application_networks: sena
+appication_port: 9000
+nginx_host_port: 8081
+nginx_container_port: 80
+db_port: 5432
 base_dir: /opt/core-api
 app_dir: /opt/core-api/core-api
 nginx_dir: /opt/core-api/nginx

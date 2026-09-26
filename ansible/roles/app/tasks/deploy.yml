@@ -28,9 +28,6 @@
     - php-fpm/supervisord.conf
     - php-fpm/Dockerfile
     - php-fpm/uploads.ini
-    
-
-
 
 - name: Authenticate with Harbor Registry via Docker
   community.docker.docker_login:

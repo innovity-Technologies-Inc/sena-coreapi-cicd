@@ -10,20 +10,20 @@ services:
     env_file:
       - ./{{ app_dir }}/.env
     expose:
-      - "9000"
+      - "{{ appication_port }}"
     volumes:
       - ./{{ app_dir }}/storage:/var/www/html/storage/
-      - ./php-fpm/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+      - ./{{ fpm_dir }}/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     restart: unless-stopped                                   
     networks:
-      - sena
+      - {{ application_networks }}
 
   web:
     image: sena-nginx
     container_name: sena-nginx
     build: ./nginx
     ports:
-      - "8081:80"
+      - "{{ nginx_host_port }}:{{ nginx_container_port }}"
 
     depends_on:
       - senabackend
@@ -36,7 +36,7 @@ services:
 
     restart: unless-stopped                                       
     networks:
-      - sena
+      - {{ application_networks }}
 
 
   db:
@@ -45,7 +45,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "5432:5432"
+      - "{{ db_port }}:{{ db_port }}"
 
     environment:
       POSTGRES_DB: {{ DB_NAME }} 
@@ -57,7 +57,7 @@ services:
       - ./db/postgres/sql:/docker-entrypoint-initdb.d
 
     networks:
-      - sena
+      - {{ application_networks }}
 
   adminer:
     image: adminer:latest
@@ -68,21 +68,21 @@ services:
     depends_on:
       - db
     networks:
-      - sena
+      - {{ application_networks }}
 
-  third-party-simulator:
-    container_name: sim-service
-    build:
-      context: ./third-party-service-simul
-      dockerfile: Dockerfile
-    ports:
-      - "9001:3000"
-    environment:
-      - PORT=3000
-    restart: always
-    networks:
-      - sena
+  # third-party-simulator:
+  #   container_name: sim-service
+  #   build:
+  #     context: ./third-party-service-simul
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "9001:3000"
+  #   environment:
+  #     - PORT=3000
+  #   restart: always
+  #   networks:
+  #     - sena
 
 networks:
-  sena:
+  {{ application_networks }}:
     external: true
