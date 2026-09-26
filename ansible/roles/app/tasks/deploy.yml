@@ -49,12 +49,24 @@
     chdir: "{{ base_dir }}"
   when: compose_status.stdout | length > 0
     
-- name: Pull latest images 
-  command: docker compose pull 
+# - name: Pull latest images 
+#   command: docker compose pull 
+#   args:
+#     chdir: "{{ base_dir }}"
+    
+# - name: Docker Containers Up
+#   command: docker compose up -d 
+#   args:
+#     chdir: "{{ base_dir }}"
+
+- name: Pull latest images from registries
+  ansible.builtin.command:
+    cmd: docker compose pull senabackend db adminer
   args:
     chdir: "{{ base_dir }}"
-    
-- name: Docker Containers Up
-  command: docker compose up -d 
+
+- name: Up the stack and build local Nginx component
+  ansible.builtin.command:
+    cmd: docker compose up -d --build
   args:
     chdir: "{{ base_dir }}"
