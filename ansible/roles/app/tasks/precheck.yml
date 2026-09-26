@@ -24,7 +24,7 @@
   file:
     path: "{{ nginx_log_dir }}"
     state: directory
-    mode: '0755'
+    mode: '0777'
     recurse: yes
 
 - name: Ensure db  directory exists 

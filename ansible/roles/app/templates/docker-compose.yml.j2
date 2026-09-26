@@ -22,8 +22,8 @@ services:
     image: sena-nginx
     container_name: sena-nginx
     build: 
-      context: .
-      dockerfile: nginx/Dockerfile
+      context: ./nginx
+      dockerfile: Dockerfile
     ports:
       - "{{ nginx_host_port }}:{{ nginx_container_port }}"
 
