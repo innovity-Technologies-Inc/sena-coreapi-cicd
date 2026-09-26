@@ -119,9 +119,7 @@ pipeline {
                 }
             }
 
-    }
-
-        // Deploy Using Ansible & Docker Compose 
+                // Deploy Using Ansible & Docker Compose 
 
         stage('Deploy using Ansible') {
             steps {
@@ -133,6 +131,9 @@ pipeline {
                 """
             }
         }
+
     }
+
+}
 
 
