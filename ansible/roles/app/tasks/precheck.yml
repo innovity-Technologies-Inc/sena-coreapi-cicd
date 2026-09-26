@@ -43,7 +43,7 @@
 
 - name: Ensure third-party-service-simul  directory exists 
   file:
-    path: "{{ third-party-service-simul }}"
+    path: "{{ third_party_service_simul }}"
     state: directory
     mode: '0755'
     recurse: yes

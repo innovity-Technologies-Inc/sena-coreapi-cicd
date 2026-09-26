@@ -8,12 +8,12 @@ services:
     #   target: prod
     image: {{ harbor_registry }}/{{ image_repo }}:{{ image_tag }}
     env_file:
-      - ./{{ app_dir }}/.env
+      - {{ app_dir }}/.env
     expose:
       - "{{ appication_port }}"
     volumes:
-      - ./{{ app_dir }}/storage:/var/www/html/storage/
-      - ./{{ fpm_dir }}/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+      - {{ app_dir }}/storage:/var/www/html/storage/
+      - {{ fpm_dir }}/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     restart: unless-stopped                                   
     networks:
       - {{ application_networks }}
@@ -21,7 +21,9 @@ services:
   web:
     image: sena-nginx
     container_name: sena-nginx
-    build: ./nginx
+    build: 
+      context: .
+      dockerfile: nginx/Dockerfile
     ports:
       - "{{ nginx_host_port }}:{{ nginx_container_port }}"
 
@@ -30,9 +32,9 @@ services:
       - db
 
     volumes:
-      - ./{{ app_dir}}:/var/www/html
-      - ./{{ nginx_dir }}/default.conf:/etc/nginx/conf.d/default.conf:ro    
-      - ./{{ nginx_dir }}/logs:/var/log/nginx
+      - {{ app_dir}}:/var/www/html
+      - {{ nginx_dir }}/default.conf:/etc/nginx/conf.d/default.conf:ro    
+      - {{ nginx_dir }}/logs:/var/log/nginx
 
     restart: unless-stopped                                       
     networks:
@@ -53,8 +55,8 @@ services:
       POSTGRES_PASSWORD: {{ DB_PASSWORD }}
 
     volumes:
-      - ./db/postgres/data:/var/lib/postgresql/data
-      - ./db/postgres/sql:/docker-entrypoint-initdb.d
+      - /db/postgres/data:/var/lib/postgresql/data
+      - /db/postgres/sql:/docker-entrypoint-initdb.d
 
     networks:
       - {{ application_networks }}

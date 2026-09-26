@@ -5,7 +5,8 @@ DB_NAME: sena
 DB_PORT: 5432
 base_dir: /opt/core-api
 harbor_registry: "imageregistry.gen-itech.com"
-harbor_username: "5hlaohhkAL5OuiA6laIJcncE0fUXdMvH"
+harbor_username: "robot$sena"
+harbor_password: "5hlaohhkAL5OuiA6laIJcncE0fUXdMvH"
 image_tag: latest
 image_repo: "senacoreapi/coreapi"
 

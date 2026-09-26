@@ -9,4 +9,4 @@ nginx_dir: /opt/core-api/nginx
 nginx_log_dir: /opt/core-api/nginx/logs
 database_dir: /opt/core-api/db
 fpm_dir: /opt/core-api/php-fpm
-third-party-service-simul: /opt/core-api/third-party-service-simul
+third_party_service_simul: /opt/core-api/third-party-service-simul
