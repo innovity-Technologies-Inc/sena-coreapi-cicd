@@ -49,15 +49,6 @@
     chdir: "{{ base_dir }}"
   when: compose_status.stdout | length > 0
     
-# - name: Pull latest images 
-#   command: docker compose pull 
-#   args:
-#     chdir: "{{ base_dir }}"
-    
-# - name: Docker Containers Up
-#   command: docker compose up -d 
-#   args:
-#     chdir: "{{ base_dir }}"
 
 - name: Pull latest images from registries
   ansible.builtin.command:
