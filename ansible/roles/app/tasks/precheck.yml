@@ -27,6 +27,22 @@
     mode: '0777'
     recurse: yes
 
+- name: Ensure absolute Laravel storage folder skeleton exists with 777 permissions
+  ansible.builtin.file:
+    path: "{{ app_dir }}/{{ item }}"
+    state: directory
+    mode: '0777'
+    recurse: yes
+  loop:
+    - storage
+    - storage/logs
+    - storage/framework
+    # - storage/framework/sessions
+    # - storage/framework/views
+    # - storage/framework/cache
+    - storage/app
+    # - storage/app/public
+
 - name: Ensure db  directory exists 
   file:
     path: "{{ database_dir }}"
