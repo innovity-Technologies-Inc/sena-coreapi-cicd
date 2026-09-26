@@ -1,4 +1,4 @@
-- name:  Deploy Charging Gateway (Docker Compose)
+- name:  Deploy Core Api Engine (Docker Compose)
   hosts: app
   become: true
   serial: 1
