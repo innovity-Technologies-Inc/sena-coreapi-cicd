@@ -3,13 +3,34 @@
     src: docker-compose.yml.j2
     dest: "{{ compose_path }}/docker-compose.yml"
 
-- name: Copy multiple app files
+- name: Copy ENV file
   ansible.builtin.copy:
     src: "{{ item }}"
-    dest: "{{ compose_path }}/"
+    dest: "{{ app_dir }}/"
     mode: '0644'
   loop:
     - .env
+- name: Copy Nginx files
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ nginx_dir }}/"
+    mode: '0644'
+  loop:
+    - nginx/default.conf
+    - nginx/Dockerfile
+
+- name: Copy php-fpm files
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ fpm_dir }}/"
+    mode: '0644'
+  loop:
+    - php-fpm/supervisord.conf
+    - php-fpm/Dockerfile
+    - php-fpm/uploads.ini
+    
+
+
 
 - name: Authenticate with Harbor Registry via Docker
   community.docker.docker_login:

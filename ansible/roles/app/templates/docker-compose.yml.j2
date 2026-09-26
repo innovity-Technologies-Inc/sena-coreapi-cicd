@@ -1,17 +1,18 @@
 services:
   senabackend:
     container_name: senabackend
-    image: sena-insurance-app:prod
-    build:
-      context: ./sena-project
-      dockerfile: Dockerfile
-      target: prod
+    # image: sena-insurance-app:prod
+    # build:
+    #   context: ./sena-project
+    #   dockerfile: Dockerfile
+    #   target: prod
+    image: {{ harbor_registry }}/{{ image_repo }}:{{ image_tag }}
     env_file:
-      - ./sena-project/.env
+      - ./{{ app_dir }}/.env
     expose:
       - "9000"
     volumes:
-      - ./sena-project/storage:/var/www/html/storage/
+      - ./{{ app_dir }}/storage:/var/www/html/storage/
       - ./php-fpm/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     restart: unless-stopped                                   
     networks:
@@ -29,9 +30,9 @@ services:
       - db
 
     volumes:
-      - ./sena-project:/var/www/html
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro    
-      - ./nginx/logs:/var/log/nginx
+      - ./{{ app_dir}}:/var/www/html
+      - ./{{ nginx_dir }}/default.conf:/etc/nginx/conf.d/default.conf:ro    
+      - ./{{ nginx_dir }}/logs:/var/log/nginx
 
     restart: unless-stopped                                       
     networks:
@@ -52,8 +53,8 @@ services:
       POSTGRES_PASSWORD: {{ DB_PASSWORD }}
 
     volumes:
-      - ./docker-compose/postgres/data:/var/lib/postgresql/data
-      - ./docker-compose/postgres/sql:/docker-entrypoint-initdb.d
+      - ./db/postgres/data:/var/lib/postgresql/data
+      - ./db/postgres/sql:/docker-entrypoint-initdb.d
 
     networks:
       - sena

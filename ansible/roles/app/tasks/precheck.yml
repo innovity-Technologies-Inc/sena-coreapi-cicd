@@ -8,8 +8,43 @@
 
 - name: Ensure compose directory exists 
   file:
-    path: "{{ compose_path }}"
+    path: "{{ base_dir }}"
     state: directory
     mode: '0755'
     recurse: yes
-  
+
+- name: Ensure nginx directory exists 
+  file:
+    path: "{{ nginx_dir }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+
+- name: Ensure nginx logs directory exists 
+  file:
+    path: "{{ nginx_log_dir }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+
+- name: Ensure db  directory exists 
+  file:
+    path: "{{ database_dir }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+
+- name: Ensure php-fpm  directory exists 
+  file:
+    path: "{{ fpm_dir }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+
+- name: Ensure third-party-service-simul  directory exists 
+  file:
+    path: "{{ third-party-service-simul }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+

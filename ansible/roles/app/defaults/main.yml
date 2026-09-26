@@ -1,1 +1,7 @@
-compose_path: /opt/core-api
+base_dir: /opt/core-api
+app_dir: /opt/core-api/core-api
+nginx_dir: /opt/core-api/nginx
+nginx_log_dir: /opt/core-api/nginx/logs
+database_dir: /opt/core-api/db
+fpm_dir: /opt/core-api/php-fpm
+third-party-service-simul: /opt/core-api/third-party-service-simul

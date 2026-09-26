@@ -3,8 +3,9 @@ DB_USER: sena
 DB_PASSWORD: "sena@5432@#5432"
 DB_NAME: sena
 DB_PORT: 5432
-image_tag: latest
-compose_path: /opt/core-api
+base_dir: /opt/core-api
 harbor_registry: "imageregistry.gen-itech.com"
 harbor_username: "5hlaohhkAL5OuiA6laIJcncE0fUXdMvH"
+image_tag: latest
+image_repo: "senacoreapi/coreapi"
 
