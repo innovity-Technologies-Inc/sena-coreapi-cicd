@@ -50,14 +50,30 @@
   when: compose_status.stdout | length > 0
     
 
-- name: Pull latest images from registries
-  ansible.builtin.command:
-    cmd: docker compose pull senabackend db adminer
-  args:
-    chdir: "{{ base_dir }}"
+# - name: Pull latest images from registries
+#   ansible.builtin.command:
+#     cmd: docker compose pull senabackend db adminer
+#   args:
+#     chdir: "{{ base_dir }}"
 
-- name: Up the stack and build local Nginx component
-  ansible.builtin.command:
-    cmd: docker compose up -d --build
-  args:
-    chdir: "{{ base_dir }}"
+# - name: Up the stack and build local Nginx component
+#   ansible.builtin.command:
+#     cmd: docker compose up -d --build
+#   args:
+#     chdir: "{{ base_dir }}"
+
+- name: Pre-compile Local Nginx Web Image Assets
+  community.docker.docker_image:
+    name: sena-nginx
+    tag: latest
+    build:
+      path: "{{ nginx_dir }}"
+    source: build
+
+- name: Deploy Application Execution Blueprint (sena-app)
+  community.docker.docker_stack:
+    name: sena-app
+    compose: ["{{ base_dir }}/docker-compose.yml"]
+    state: present
+  run_once: true
+  delegate_to: stg-app-01

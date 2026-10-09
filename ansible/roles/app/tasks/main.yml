@@ -1,2 +1,2 @@
 - import_tasks: precheck.yml
-- import_tasks: deploy.yml
+- import_tasks: deploy-app.yml

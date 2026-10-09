@@ -5,8 +5,9 @@ nginx_container_port: 80
 db_port: 5432
 base_dir: /opt/core-api
 app_dir: /opt/core-api/core-api
+database_dir: /opt/core-api/db
 nginx_dir: /opt/core-api/nginx
 nginx_log_dir: /opt/core-api/nginx/logs
-database_dir: /opt/core-api/db
 fpm_dir: /opt/core-api/php-fpm
 third_party_service_simul: /opt/core-api/third-party-service-simul
+shared_network: "sena-overlay-network"

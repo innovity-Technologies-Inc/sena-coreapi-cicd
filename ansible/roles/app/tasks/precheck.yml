@@ -6,7 +6,28 @@
   command: docker compose version 
   changed_when: false
 
-- name: Ensure compose directory exists 
+# System Infrastructure 
+- name: Create required Overlay network
+  community.docker.docker_network:
+    name: "{{ shared_network }}"
+    driver: overlay
+    attachable: true
+    state: present
+  run_once: true
+  when: inventory_hostname == "stg-app-01"
+
+- name: Label Swarm Cluster Nodes for Placement Constraints
+  community.docker.docker_node:
+    hostname: "{{ item.name }}"
+    labels:
+      id: "{{ item.label }}"
+  loop:
+    - { name: 'stg-app-01', label: 'node1' }
+    - { name: 'stg-app-02', label: 'node2' }
+  run_once: true
+  delegate_to: stg-app-01
+
+- name: Ensure Base directory exists 
   file:
     path: "{{ base_dir }}"
     state: directory
@@ -44,12 +65,12 @@
     - storage/app
     # - storage/app/public
 
-- name: Ensure db  directory exists 
-  file:
-    path: "{{ database_dir }}"
-    state: directory
-    mode: '0755'
-    recurse: yes
+# - name: Ensure database  directory exists 
+#   file:
+#     path: "{{ database_dir }}"
+#     state: directory
+#     mode: '0755'
+#     recurse: yes
 
 - name: Ensure php-fpm  directory exists 
   file:
@@ -64,4 +85,5 @@
     state: directory
     mode: '0755'
     recurse: yes
+
 
