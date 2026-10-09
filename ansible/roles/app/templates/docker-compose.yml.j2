@@ -3,7 +3,7 @@ version: '3.8'
 services:
   senabackend:
     container_name: senabackend
-    image: {{ harbor_registry }}/{{ image_repo }}:{{ image_tag default('latest') }}
+    image: {{ harbor_registry }}/{{ image_repo }}:{{ image_tag | default('latest') }}
     env_file:
       - {{ app_dir }}/.env
     expose:
@@ -41,66 +41,6 @@ services:
       replicas: 1
       restart_policy:
         condition: on-failure
-
-
-  # db:
-  #   image: postgres:16
-  #   container_name: postgres-container
-  #   restart: unless-stopped
-
-  #   ports:
-  #     - "{{ db_port }}:{{ db_port }}"
-
-  #   environment:
-  #     POSTGRES_DB: {{ DB_NAME }} 
-  #     POSTGRES_USER: {{ DB_USER }}
-  #     POSTGRES_PASSWORD: {{ DB_PASSWORD }}
-
-  #   volumes:
-  #     - /db/postgres/data:/var/lib/postgresql/data
-  #     - /db/postgres/sql:/docker-entrypoint-initdb.d
-
-  #   networks:
-  #     - {{ shared_network }}
-
-  # adminer:
-  #   image: adminer:latest
-  #   container_name: sena-adminer
-  #   restart: unless-stopped
-  #   ports:
-  #     - "8080:8080"
-  #   depends_on:
-  #     - db
-  #   networks:
-  #     - {{ shared_network }}
-
-  # third-party-simulator:
-  #   container_name: sim-service
-  #   build:
-  #     context: ./third-party-service-simul
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "9001:3000"
-  #   environment:
-  #     - PORT=3000
-  #   restart: always
-  #   networks:
-  #     - sena
-
-  # pg_router:
-  #   image: haproxy:2.8-alpine
-  #   configs:
-  #     - source: haproxy_config
-  #       target: /usr/local/etc/haproxy/haproxy.cfg
-  #   ports:
-  #     - "5432:5432"
-  #   networks:
-  #     - {{ shared_network }}
-  #   deploy:
-  #     - replicas: 2
-  # configs:
-  #   haproxy_config:
-  #     file: {{ haproxy_dir }}/haproxy.cfg
 
 
 networks:
