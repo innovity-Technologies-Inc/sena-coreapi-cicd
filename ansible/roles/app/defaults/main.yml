@@ -14,8 +14,12 @@ app_storage_volume_name: '{{ app_stack_name }}-storage'
 app_nfs_server: ''
 app_nfs_export_path: '{{ app_storage_path }}'
 
-# Single app replica with published FastCGI ingress.
+# Independent app, scheduler, and queue service replicas.
 app_service_replicas: 1
+app_scheduler_replicas: 1
+app_queue_replicas: 1
+
+# Only PHP-FPM publishes FastCGI through Swarm ingress.
 app_fpm_port: 9000
 app_published_port: 9000
 

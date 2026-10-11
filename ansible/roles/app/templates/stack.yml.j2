@@ -1,8 +1,17 @@
 # Swarm application stack managed by Ansible. Contains credentials; keep mode 0600.
 version: "3.8"
 services:
-  senabackend:
+{% for service_name, service_command, service_replicas in [
+    ('senabackend', ['php-fpm', '--nodaemonize'], app_service_replicas),
+    ('scheduler', ['php', 'artisan', 'schedule:work'], app_scheduler_replicas),
+    ('queue', ['php', 'artisan', 'queue:work', 'database', '--tries=3', '--backoff=3', '--timeout=60'], app_queue_replicas)
+] %}
+  {{ service_name }}:
     image: {{ (app_image_registry ~ ':' ~ image_tag) | to_json }}
+    command: {{ service_command | to_json }}
+{% if service_name != 'senabackend' %}
+    user: "33:33"
+{% endif %}
     environment:
 {% for key, value in app_environment_variables.items() %}
       {{ key }}: {{ value | string | replace('$', '$$') | to_json }}
@@ -13,11 +22,13 @@ services:
         uid: "33"
         gid: "33"
         mode: 0400
+{% if service_name == 'senabackend' %}
     ports:
       - target: {{ app_fpm_port | int }}
         published: {{ app_published_port | int }}
         protocol: tcp
         mode: ingress
+{% endif %}
     volumes:
 {% if app_storage_backend == 'nfs' %}
       - type: volume
@@ -34,20 +45,24 @@ services:
       - app_network
     stop_grace_period: 90s
     healthcheck:
+{% if service_name == 'senabackend' %}
       test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', {{ app_fpm_port }}) ? 0 : 1);"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: {{ app_healthcheck_start_period | to_json }}
+{% else %}
+      disable: true
+{% endif %}
     deploy:
-      replicas: {{ app_service_replicas | int }}
+      replicas: {{ service_replicas | int }}
 {% if app_storage_backend == 'bind' %}
       placement:
         constraints:
           - {{ ('node.id == ' ~ app_storage_node_id) | to_json }}
 {% endif %}
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
       update_config:
         parallelism: 1
@@ -57,6 +72,7 @@ services:
       rollback_config:
         parallelism: 1
         order: stop-first
+{% endfor %}
 networks:
   app_network:
     external: true

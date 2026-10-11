@@ -1,6 +1,6 @@
 # Sena Core API CI/CD
 
-Jenkins builds and pushes the application repository's production image, or reuses an existing immutable image tag, then deploys it to Docker Swarm through Ansible. One migration task must finish with exit code zero before the application service is updated in either mode.
+Jenkins builds and pushes the application repository's production image, or reuses an existing immutable image tag, then deploys it to Docker Swarm through Ansible. One migration task must finish with exit code zero before the app, scheduler, and queue services are updated in either mode.
 
 Jenkins selects the environment through `APP_BRANCH`: `staging` deploys staging and `master` deploys production. `DEPLOY_MODE=build-and-deploy` builds and pushes a new image; `DEPLOY_MODE=redeploy` applies current Ansible settings and Jenkins credentials to an existing image. The verification tests under `tests/` remain local and are not Jenkins stages.
 
@@ -24,8 +24,8 @@ flowchart TD
     I -->|Exit 0| J[Remove successful migration stack]
     I -->|Failure or timeout| K[Stop and retain migration tasks]
     K --> L[Fail deployment before app update]
-    J --> M[Deploy app stack and prune container nginx]
-    M --> N[Verify requested image and service convergence]
+    J --> M[Deploy app, scheduler, and queue services]
+    M --> N[Verify requested image and all three services]
     N --> O[Remove obsolete host env file]
 ```
 
@@ -42,11 +42,14 @@ The application stack is `sena-app`. Migration uses a separate, uniquely named `
 | Group variables | `ansible/group_vars/staging.yml` | `ansible/group_vars/production.yml` |
 | Manager address | `172.17.0.206` | Existing `172.17.0.239` entry must be verified |
 | Published FastCGI port | `9000` | `9000` |
+| App replicas | `1` | `1` |
+| Scheduler replicas | `1` | `1` |
+| Queue replicas | `1` | `1` |
 | Deployment directory | `/opt/core-api/deploy` | `/opt/core-api/deploy` |
 | Storage backend | NFS volume `sena-staging-storage` | Local bind mount |
 | Storage source | `172.17.0.206:/opt/core-api/core-api/storage` | `/opt/core-api/core-api/storage` |
 
-The role targets exactly one manager. Staging app and migration tasks can run on either configured NFS client node. Production retains its local storage bind mount and manager placement constraint. Both environments keep one app replica.
+The role targets exactly one manager. Staging app, scheduler, queue, and migration tasks can run on either configured NFS client node. Production retains its local storage bind mount and manager placement constraint. Both environments initially run one replica of each long-running service; their counts are independent.
 
 Non-secret runtime properties belong in `ansible/group_vars/<environment>.yml` under `app_environment_overrides`. Shared defaults are in `ansible/roles/app/defaults/main.yml`. The final environment combines defaults, environment overrides, and Jenkins secrets, and sets `APP_ENV` and `APP_DEBUG=false`.
 
@@ -94,21 +97,39 @@ Stack files contain runtime credentials and are written under `/opt/core-api/dep
 
 Text credentials are explicit service environment variables rendered into the stack. They remain visible to privileged Docker inspection. Stack files are root-owned with mode `0600`; the deployment directory is mode `0700` and separate from shared storage. Temporary Docker credentials and migration configuration are removed on normal completion or handled failure.
 
-The Firebase file credential is validated on the controller and sent through standard input to create a content-versioned Swarm secret, following the CGW deployment pattern. Both the app and migration service mount it read-only at `/var/www/html/firebase-credentials.json`, with UID/GID `33:33` and mode `0400`. `FIREBASE_CREDENTIALS=firebase-credentials.json` remains compatible with Laravel's `base_path()` lookup. The JSON is kept outside public storage and is not copied to NFS or included in the stack environment. Old secret versions are retained for rollback; remove only versions no longer needed by deployments or retained migration services.
+The Firebase file credential is validated on the controller and sent through standard input to create a content-versioned Swarm secret, following the CGW deployment pattern. The app, scheduler, queue, and migration services mount it read-only at `/var/www/html/firebase-credentials.json`, with UID/GID `33:33` and mode `0400`. `FIREBASE_CREDENTIALS=firebase-credentials.json` remains compatible with Laravel's `base_path()` lookup. The JSON is kept outside public storage and is not copied to NFS or included in the stack environment. Old secret versions are retained for rollback; remove only versions no longer needed by deployments or retained migration services.
 
 The application must read `project_id` from this JSON; a separate `FIREBASE_PROJECT_ID` is not supplied. Shared non-secret settings live in `ansible/roles/app/defaults/main.yml`, with endpoint and diagnostic overrides in each environment's group vars. Staging retains debug logging; production uses info logging. Pulse is disabled in both environments as in the reference file. `SANCTUM_STATEFUL_DOMAINS` is `agrotech.digicontechnologies.com` for staging and `mci.siplc.org` for production. `LOG_VIEWER_PASSWORD` is deliberately omitted for both environments. The local `env.production` reference is not deployed; its `APP_ENV=local` and `APP_DEBUG=true` are replaced by the selected environment and `APP_DEBUG=false`.
 
 ## Required application image support
 
-The selected application branch must contain its production Dockerfile, `docker/uploads.ini`, Supervisor configuration, and the updated entrypoint that waits for the database and executes the requested command without running migrations on app startup. The image supplies the PHP extensions and upload limits previously supplied by this repository.
+The selected application branch must contain its production Dockerfile, `docker/uploads.ini`, and the updated entrypoint that waits for the database and executes the requested command without running migrations on app startup. The image supplies the PHP extensions and upload limits previously supplied by this repository.
 
 The project Dockerfile's `prod` target includes application code and production Composer dependencies. The image preserves PostgreSQL, GD, Imagick, `intl`, `mbstring`, `exif`, `pcntl`, and the other PHP extensions previously supplied by the CI/CD role. `docker/uploads.ini` supplies the existing upload limits.
 
-The entrypoint waits for the database with a bounded timeout and reads credentials through environment variables. It then executes the service command: Artisan for the migration task, or Supervisor for the app. Migration logic and the `RUN_MIGRATIONS` flag are no longer part of the entrypoint.
+The entrypoint waits for the database with a bounded timeout and reads credentials through environment variables. It then executes the service command: PHP-FPM for the app, or Artisan for the scheduler, queue, and migration services. The stack overrides the image command explicitly; Supervisor is not used. Migration logic and the `RUN_MIGRATIONS` flag are no longer part of the entrypoint.
 
 The selected application branch must also derive the Firebase project ID from the credentials JSON. Images served through PHP-FPM require a Laravel `/storage/{path}` route that returns files only from `storage/app/public` and rejects paths or symlinks escaping that directory.
 
-Docker probes the PHP-FPM listening socket. Ansible verifies service convergence and the requested image tag. These checks do not verify ingress reachability, Laravel request handling, or the health of each Supervisor worker. The current implementation permits one app replica; scaling also requires a scheduler and worker plan.
+Docker probes the PHP-FPM listening socket on the app service. The scheduler and queue run Artisan directly as UID/GID `33:33`, with the PHP-FPM health check disabled. Swarm monitors their main process exits, and Ansible verifies all three services have the requested image and running replica counts. These checks do not verify ingress reachability, Laravel request handling, a stuck worker, or successful job processing.
+
+## Swarm services and scaling
+
+All three long-running services use the same immutable image, Laravel environment, Firebase secret, overlay network, and storage. Only the app publishes FastCGI port `9000`.
+
+| Service | Command | Replica variable |
+| --- | --- | --- |
+| `sena-app_senabackend` | `php-fpm --nodaemonize` | `app_service_replicas` |
+| `sena-app_scheduler` | `php artisan schedule:work` | `app_scheduler_replicas` |
+| `sena-app_queue` | `php artisan queue:work database --tries=3 --backoff=3 --timeout=60` | `app_queue_replicas` |
+
+All counts default to `1`. To scale the app later, set `app_service_replicas: 3` at the top level of the selected environment's group variables and redeploy. Scheduler and queue counts remain unchanged. Replica counts must be positive integers. Staging replicas can share NFS across the configured nodes; production's local bind mount continues to pin all services to its manager.
+
+Each long-running service uses `restart_policy.condition: any` with a five-second delay, including after a clean process exit. Each has a 90-second shutdown grace period. Migration remains a single task with `condition: none` so it runs once per deployment.
+
+Keep one scheduler replica initially. The application must apply `onOneServer()` to each scheduled task before increasing `app_scheduler_replicas`; all schedulers must use the same shared cache for those locks. The configured database cache supports this. Missed scheduled times during downtime are not automatically replayed.
+
+Queue workers can scale independently and reserve different jobs from the shared PostgreSQL queue. Keep `DB_QUEUE_RETRY_AFTER` greater than the worker timeout of 60 seconds; the project's default is 90 seconds. Interrupted jobs can be retried, so job handlers must tolerate repeated execution. Scheduler locks prevent duplicate scheduling; they do not guarantee exactly-once execution of queued jobs.
 
 ## Jenkins deployment
 
@@ -140,10 +161,10 @@ Both modes follow the deployment steps below:
 2. Build-and-deploy pushes the build tag using temporary registry credentials. Redeploy reuses the image already in Harbor.
 3. Ansible validates the environment, manager, network, and both stack templates before deployment changes.
 4. It acquires a deployment lock, prepares Laravel storage directories, and creates staging's NFS-backed Docker volume on the manager if absent. Existing manager volumes must match the configured NFS options. It creates or reuses the content-versioned Firebase secret, then runs one uniquely named migration task using the same image, secret, and storage as the app. The task runs `php artisan migrate --force --no-interaction` with automatic restarts disabled.
-5. After migration success, it removes the migration service, deploys the app stack, prunes the retired container nginx service, and waits for the requested build to converge.
+5. After migration success, it removes the migration service, deploys the app, scheduler, and queue services, prunes retired services, and waits for all three services to converge on the requested build.
 6. It removes the obsolete host `.env` file after successful convergence. Temporary registry credentials, migration configuration, and the lock are cleaned up on success or failure.
 
-The old app continues running during migration. Application updates use one replica and stop-first ordering. Supervisor continues managing PHP-FPM, the queue worker, scheduler, and Pulse worker.
+Existing app, scheduler, and queue tasks continue running during migration. Each service updates one task at a time using stop-first ordering. With the initial one-replica settings, updates briefly interrupt that service. Migration failure leaves the existing application stack unchanged; services update only after migration succeeds.
 
 ## Host nginx, ingress, and storage
 
@@ -305,13 +326,17 @@ docker stack services sena-app
 docker stack ps --no-trunc sena-app
 ```
 
-Use `sudo docker ...` if the account lacks direct Docker access. Inspect app tasks, the image reference, update status, and logs:
+Use `sudo docker ...` if the account lacks direct Docker access. Inspect tasks for all three services, then the image reference, update status, and logs:
 
 ```sh
 docker service ps --no-trunc sena-app_senabackend
+docker service ps --no-trunc sena-app_scheduler
+docker service ps --no-trunc sena-app_queue
 docker service inspect sena-app_senabackend --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
 docker service inspect sena-app_senabackend --format '{{json .UpdateStatus}}'
 docker service logs --tail 100 --timestamps sena-app_senabackend
+docker service logs --tail 100 --timestamps sena-app_scheduler
+docker service logs --tail 100 --timestamps sena-app_queue
 ```
 
 Service logs depend on the Docker logging driver's support. Verify a known application request through host nginx separately; a converged Swarm service alone does not verify the HTTP path.
@@ -349,15 +374,17 @@ This fails rather than recursively deleting unexpected directory contents. Do no
 
 Application rollback is a manual operational decision because it does not reverse database migrations. Verify that the previous image is compatible with the current schema and host nginx configuration. Updates use stop-first ordering and pause on failure; automatic rollback is not enabled. A single replica can briefly interrupt service during updates.
 
-To restore the app service's previous stored specification:
+To restore the services' previous stored specifications, where a previous deployment exists:
 
 ```sh
 docker service rollback sena-app_senabackend
+docker service rollback sena-app_scheduler
+docker service rollback sena-app_queue
 docker stack services sena-app
 docker service ps --no-trunc sena-app_senabackend
 ```
 
-Inspect the resulting image, ports, and application behavior. Service rollback does not restore pruned services or rewrite `/opt/core-api/deploy/stack.yml`. A later deployment applies the selected repository configuration again.
+Inspect all three services for compatible images, expected replica counts, and application behavior. Service rollback does not restore pruned services or rewrite `/opt/core-api/deploy/stack.yml`. A later deployment applies the selected repository configuration again.
 
 A manual playbook deployment of a previous build runs that image's migration command again; it does not restore an older database schema. Review database compatibility before using that path.
 
@@ -378,13 +405,14 @@ The external overlay network and persisted storage are separate resources. Stack
 | SSH or sudo authentication failed | Verify the inventory user, Jenkins agent key, and passwordless sudo; use `--ask-become-pass` for interactive runs |
 | Missing `jsondiff` or `yaml` | Provision the modules for the manager's selected Python interpreter |
 | Overlay network missing or wrong driver | Verify the existing `sena-overlay-network` is a Swarm overlay |
-| App task pending on placement | Verify eligible nodes are ready and accepting tasks; production's local storage pins its tasks to the manager |
+| Service task pending on placement | Verify eligible nodes are ready and accepting tasks; production's local storage pins its tasks to the manager |
 | NFS mount or storage permission error | Verify the manager export, client package, TCP port 2049, and matching `www-data` IDs |
 | Existing storage volume has different options | Inspect its configuration and users before reusing the name; Docker does not replace existing volume options |
 | Host nginx returns `502` | Verify FastCGI configuration, the published port, PHP-FPM task health, and the container script path |
 | Uploaded files return `404` | Check nginx forwards `/storage/` through FastCGI, the Laravel file-serving route exists, and the app sees the files under `storage/app/public` |
 | Database readiness times out | Verify database settings, credentials, connectivity, and `DB_WAIT_TIMEOUT` |
 | Update paused or wrong image running | Inspect task errors and `UpdateStatus`; convergence checks reject these states |
+| Scheduler or queue repeatedly restarts | Inspect that service's logs, database/cache connectivity, and the selected image's Artisan support |
 | Retained migration blocks deployment | Review its tasks and database state, remove the reviewed migration stack, then retry |
 | Deployment lock exists | Confirm no deployment or migration is active before clearing a stale empty lock |
 | Production precheck fails | Complete verified inventory, runtime settings, confirmation flag, and environment credentials |
@@ -397,7 +425,7 @@ Use a Python environment with `ansible-core`, Jinja2, and PyYAML installed. The 
 SENA_PROJECT_ROOT=/absolute/path/to/sena-project python3 -m unittest discover -s tests -v
 ```
 
-The local tests also cover credential rendering, deployment argument handling, migration failures, convergence, and entrypoint behavior. If Docker CLI is available, stack rendering is checked with `docker stack config`, which does not require a daemon. Jenkins mode tests execute the Jenkinsfile through Groovy with mocked Jenkins steps, checking stage selection, image validation, and environment-specific credential bindings. These tests require Java and `GROOVY_CLASSPATH` containing the Groovy and `groovy-json` JARs; they also detect locally cached Groovy 4.0.17 Maven artifacts. Tests are local assets and are not included in repository checkouts.
+The local tests also cover independent service scaling, worker commands, shared mounts, restart policies, replica validation, credential rendering, deployment argument handling, migration failures, convergence of all three services, and entrypoint behavior. If Docker CLI is available, stack rendering is checked with `docker stack config`, which does not require a daemon. Jenkins mode tests execute the Jenkinsfile through Groovy with mocked Jenkins steps, checking stage selection, image validation, and environment-specific credential bindings. These tests require Java and `GROOVY_CLASSPATH` containing the Groovy and `groovy-json` JARs; they also detect locally cached Groovy 4.0.17 Maven artifacts. Tests are local assets and are not included in repository checkouts.
 
 ## Repository layout
 
@@ -409,7 +437,7 @@ ansible/requirements.yml            Pinned Ansible collections
 ansible/inventory/                  One Swarm manager per environment
 ansible/group_vars/                 Non-secret environment settings
 ansible/roles/app/defaults/main.yml  Shared settings and credential lookups
-ansible/roles/app/tasks/             Prechecks, migration gate, and app deployment
+ansible/roles/app/tasks/             Prechecks, migration gate, and service deployment
 ansible/roles/app/templates/         stack.yml.j2 and migration.yml.j2
 scripts/deploy-from-jenkins.sh       Passes build settings to Ansible
 scripts/swarm_wait.py               Bounded task and deployment verification

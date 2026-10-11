@@ -75,11 +75,15 @@ def main():
                         'shutdown', 'orphaned', 'remove'}
                         for t in tasks_for(args.services[0]))
         else:
-            ready = all(
-                service_converged(
-                    json.loads(docker('service', 'inspect', name))[0], tasks_for(name), args.image
-                ) for name in args.services
-            )
+            services_ready = []
+            for name in args.services:
+                try:
+                    services_ready.append(service_converged(
+                        json.loads(docker('service', 'inspect', name))[0], tasks_for(name), args.image
+                    ))
+                except RuntimeError as error:
+                    raise RuntimeError(name + ': ' + str(error)) from error
+            ready = all(services_ready)
         if ready:
             print(args.mode + ' verified')
             return 0

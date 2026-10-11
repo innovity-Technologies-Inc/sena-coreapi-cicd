@@ -197,7 +197,7 @@
         DOCKER_CONFIG: '{{ app_docker_auth_directory.path }}'
       no_log: true
 
-    - name: Require application service convergence
+    - name: Require app, scheduler, and queue service convergence
       ansible.builtin.command:
         argv:
           - "{{ ansible_python_interpreter | default('/usr/bin/python3') }}"
@@ -208,6 +208,8 @@
           - --image
           - '{{ app_image_registry }}:{{ image_tag }}'
           - '{{ app_stack_name }}_senabackend'
+          - '{{ app_stack_name }}_scheduler'
+          - '{{ app_stack_name }}_queue'
         stdin: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../scripts/swarm_wait.py') }}"
       changed_when: false
 

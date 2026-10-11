@@ -21,8 +21,6 @@
       - app_environment_variables.DB_WAIT_TIMEOUT | int < app_migration_timeout | int
       - app_fpm_port | int == 9000
       - app_published_port | int > 0 and app_published_port | int < 65536
-      # The image runs one scheduler and queue worker. Scaling requires a worker plan.
-      - app_service_replicas | int == 1
       - app_migration_timeout | int > 0
       - app_deployment_timeout | int > 0
       - app_storage_path is match('^/')
@@ -30,6 +28,14 @@
       - app_environment != 'production' or app_production_inventory_confirmed | default(false) | bool
     fail_msg: Supply an immutable build tag, complete environment settings, and one confirmed manager.
   no_log: true
+
+- name: Require positive integer replica counts for each application service
+  ansible.builtin.assert:
+    that:
+      - app_service_replicas | string is match('^[1-9][0-9]*$')
+      - app_scheduler_replicas | string is match('^[1-9][0-9]*$')
+      - app_queue_replicas | string is match('^[1-9][0-9]*$')
+    fail_msg: App, scheduler, and queue replica counts must be positive integers.
 
 - name: Validate manager-owned NFS storage settings
   ansible.builtin.assert:
