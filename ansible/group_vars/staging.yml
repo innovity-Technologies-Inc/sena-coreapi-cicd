@@ -59,9 +59,9 @@ app_environment_overrides:
   MAIL_MAILER: smtp
   MAIL_HOST: smtp.office365.com
   MAIL_PORT: '587'
-  MAIL_USERNAME: crm@digicontechnologies.com
+  MAIL_USERNAME: cattleinsurance@digicontechnologies.com
   MAIL_ENCRYPTION: tls
-  MAIL_FROM_ADDRESS: crm@digicontechnologies.com
+  MAIL_FROM_ADDRESS: cattleinsurance@digicontechnologies.com
   MAIL_FROM_NAME: Sena Microfinance
 
   # Optional object storage.

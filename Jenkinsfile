@@ -113,7 +113,7 @@ pipeline {
                     harborCredentialBinding(),
                     string(credentialsId: "sena-${env.DEPLOY_ENV}-app-key", variable: 'SENA_APP_KEY'),
                     string(credentialsId: "sena-${env.DEPLOY_ENV}-db-password", variable: 'SENA_DB_PASSWORD'),
-                    string(credentialsId: "sena-${env.DEPLOY_ENV}-cgw-api-token", variable: 'SENA_CGW_API_TOKEN'),
+                    string(credentialsId: "cgw-${env.DEPLOY_ENV}-api-key", variable: 'SENA_CGW_API_TOKEN'),
                     string(credentialsId: "sena-${env.DEPLOY_ENV}-mail-password", variable: 'SENA_MAIL_PASSWORD'),
                     string(credentialsId: "sena-${env.DEPLOY_ENV}-google-maps-api-key", variable: 'SENA_GOOGLE_MAPS_API_KEY')
                 ]) {

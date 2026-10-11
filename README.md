@@ -65,7 +65,7 @@ Configure the Jenkins job as **Pipeline from SCM**, pointing to this repository 
 
 ## Jenkins credentials
 
-Create the following Jenkins credentials. Replace `<environment>` with `staging` or `production` for each application secret.
+Reuse the existing `github-access`, `harbor`, and `cgw-<environment>-api-key` credentials. Create the Sena-specific credentials below. Replace `<environment>` with `staging` or `production` for each environment-specific secret.
 
 | Credential ID | Type | Controller environment variable |
 | --- | --- | --- |
@@ -73,11 +73,13 @@ Create the following Jenkins credentials. Replace `<environment>` with `staging`
 | `harbor` | Username with password | `HARBOR_USER`, `HARBOR_PASSWORD` |
 | `sena-<environment>-app-key` | Secret text | `SENA_APP_KEY` |
 | `sena-<environment>-db-password` | Secret text | `SENA_DB_PASSWORD` |
-| `sena-<environment>-cgw-api-token` | Secret text | `SENA_CGW_API_TOKEN` |
+| `cgw-<environment>-api-key` | Secret text | `SENA_CGW_API_TOKEN` |
 | `sena-<environment>-mail-password` | Secret text | `SENA_MAIL_PASSWORD` |
 | `sena-<environment>-google-maps-api-key` | Secret text | `SENA_GOOGLE_MAPS_API_KEY` |
 
 Use the application's existing `APP_KEY` so encrypted application data remains readable. Ansible maps the controller variables to the application's `APP_KEY`, `DB_PASSWORD`, `CGW_API_TOKEN`, `MAIL_PASSWORD`, and `GOOGLE_MAPS_API_KEY`.
+
+The existing CGW API-key credential supplies Laravel's `CGW_API_TOKEN`; a separate Sena CGW-token credential is unnecessary. Both environments use `cattleinsurance@digicontechnologies.com` as the mail username and sender address.
 
 Git and Harbor credentials are shared. Deployment SSH uses the inventory user and the Jenkins system user's existing SSH key or agent; the pipeline does not bind a deployment SSH or sudo-password credential. Verify the manager fingerprint through a trusted connection before populating `known_hosts`.
 

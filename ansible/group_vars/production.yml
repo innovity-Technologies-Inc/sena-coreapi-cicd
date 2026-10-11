@@ -15,8 +15,8 @@ app_environment_overrides:
 
   # Outbound mail.
   MAIL_HOST: ''
-  MAIL_USERNAME: ''
-  MAIL_FROM_ADDRESS: ''
+  MAIL_USERNAME: cattleinsurance@digicontechnologies.com
+  MAIL_FROM_ADDRESS: cattleinsurance@digicontechnologies.com
 
   # Charging gateway endpoint.
   CGW_BASE_URL: ''
