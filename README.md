@@ -1,22 +1,26 @@
 # Sena Core API CI/CD
 
-Jenkins builds the application repository's production image, pushes an immutable build tag to Harbor, and deploys it to Docker Swarm through Ansible. One migration task must finish with exit code zero before the application service is updated.
+Jenkins builds and pushes the application repository's production image, or reuses an existing immutable image tag, then deploys it to Docker Swarm through Ansible. One migration task must finish with exit code zero before the application service is updated in either mode.
 
-Jenkins selects the application branch: `staging` deploys staging and `master` deploys production. Deployment runs automatically after a successful image build and push. The verification tests under `tests/` remain local and are not Jenkins stages.
+Jenkins selects the environment through `APP_BRANCH`: `staging` deploys staging and `master` deploys production. `DEPLOY_MODE=build-and-deploy` builds and pushes a new image; `DEPLOY_MODE=redeploy` applies current Ansible settings and Jenkins credentials to an existing image. The verification tests under `tests/` remain local and are not Jenkins stages.
 
 ## Deployment flow
 
 ```mermaid
 flowchart TD
     A[Checkout CI/CD repository] --> B[Select staging or production]
-    B --> C[Checkout selected Sena branch]
+    B --> P{Deployment mode}
+    P -->|build-and-deploy| C[Checkout selected Sena branch]
     C --> D[Build production PHP image]
     D --> E[Push build-specific tag to Harbor]
     E --> F[Ansible prechecks and stack validation]
+    P -->|redeploy| R[Validate existing image tag and environment]
+    R --> F
     F --> G[Acquire deployment lock]
     G --> G1[Prepare configured Laravel storage]
     G1 --> H[Registry authentication and manifest check]
-    H --> I[Run one migration task without restarts]
+    H --> H1[Create or reuse Firebase secret]
+    H1 --> I[Run one migration task without restarts]
     I -->|Exit 0| J[Remove successful migration stack]
     I -->|Failure or timeout| K[Stop and retain migration tasks]
     K --> L[Fail deployment before app update]
@@ -108,10 +112,32 @@ Docker probes the PHP-FPM listening socket. Ansible verifies service convergence
 
 ## Jenkins deployment
 
-In **Build with Parameters**, select `APP_BRANCH=staging` for staging or `APP_BRANCH=master` for configured production. Jenkins builds and pushes the application image, then deploys the generated build tag.
+In **Build with Parameters**, select `APP_BRANCH=staging` for staging or `APP_BRANCH=master` for configured production, then choose the deployment mode:
 
-1. Jenkins checks out the selected application branch and builds the Dockerfile's `prod` target.
-2. It pushes the build tag using temporary registry credentials.
+| Parameter | Build and deploy | Redeploy existing image |
+| --- | --- | --- |
+| `DEPLOY_MODE` | `build-and-deploy` (default) | `redeploy` |
+| `APP_BRANCH` | Application branch and deployment environment | Deployment environment; application checkout is skipped |
+| `EXISTING_IMAGE_TAG` | Unused | Required, for example `staging-42-abc123def456` |
+
+Every run checks out the CI/CD repository at the job's configured SCM revision. Redeploy skips application checkout, Docker build, and image push. Its tag must match the selected environment's `ENVIRONMENT-BUILD-REVISION` format, with a positive build number, a lowercase hexadecimal revision of 7–40 characters, and no more than 128 characters overall. Empty tags, `latest`, image URLs, and tags from the other environment are rejected before deployment. The existing manager-side manifest check verifies the selected image exists and is accessible before migration.
+
+For a credentials or runtime variable change, start a new run with `DEPLOY_MODE=redeploy` and supply the currently deployed tag. Bindings load the current Jenkins credentials, including the Firebase file. Publish Ansible changes to the CI/CD branch configured by the job before starting the run. Use a new parameterized run; Jenkins's **Restart from Stage** retains the original run's SCM revision and parameters.
+
+Redeploy uses the same migration gate, Firebase secret provisioning, storage handling, and convergence checks as a new-image deployment. It runs one migration task even if the selected image has no pending migrations. Changed service environment values or Firebase mounts update the app task; identical service settings do not force a restart. Keep deployed tags immutable in Harbor so reusing a tag selects the same image contents.
+
+Example for staging:
+
+```text
+DEPLOY_MODE:        redeploy
+APP_BRANCH:         staging
+EXISTING_IMAGE_TAG: staging-42-abc123def456
+```
+
+Both modes follow the deployment steps below:
+
+1. Build-and-deploy checks out the selected application branch and builds the Dockerfile's `prod` target. Redeploy validates and selects the supplied tag.
+2. Build-and-deploy pushes the build tag using temporary registry credentials. Redeploy reuses the image already in Harbor.
 3. Ansible validates the environment, manager, network, and both stack templates before deployment changes.
 4. It acquires a deployment lock, prepares Laravel storage directories, and creates staging's NFS-backed Docker volume on the manager if absent. Existing manager volumes must match the configured NFS options. It creates or reuses the content-versioned Firebase secret, then runs one uniquely named migration task using the same image, secret, and storage as the app. The task runs `php artisan migrate --force --no-interaction` with automatic restarts disabled.
 5. After migration success, it removes the migration service, deploys the app stack, prunes the retired container nginx service, and waits for the requested build to converge.
@@ -371,7 +397,7 @@ Use a Python environment with `ansible-core`, Jinja2, and PyYAML installed. The 
 SENA_PROJECT_ROOT=/absolute/path/to/sena-project python3 -m unittest discover -s tests -v
 ```
 
-The local tests also cover credential rendering, deployment argument handling, migration failures, convergence, and entrypoint behavior. If Docker CLI is available, stack rendering is checked with `docker stack config`, which does not require a daemon. Tests are local assets and are not included in repository checkouts.
+The local tests also cover credential rendering, deployment argument handling, migration failures, convergence, and entrypoint behavior. If Docker CLI is available, stack rendering is checked with `docker stack config`, which does not require a daemon. Jenkins mode tests execute the Jenkinsfile through Groovy with mocked Jenkins steps, checking stage selection, image validation, and environment-specific credential bindings. These tests require Java and `GROOVY_CLASSPATH` containing the Groovy and `groovy-json` JARs; they also detect locally cached Groovy 4.0.17 Maven artifacts. Tests are local assets and are not included in repository checkouts.
 
 ## Repository layout
 

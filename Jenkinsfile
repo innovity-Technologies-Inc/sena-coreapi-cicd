@@ -19,9 +19,19 @@ pipeline {
 
     parameters {
         choice(
+            name: 'DEPLOY_MODE',
+            choices: ['build-and-deploy', 'redeploy'],
+            description: 'Build a new application image or redeploy an existing image with current settings and credentials'
+        )
+        choice(
             name: 'APP_BRANCH',
             choices: ['staging', 'master'],
             description: 'staging deploys staging; master deploys production'
+        )
+        string(
+            name: 'EXISTING_IMAGE_TAG',
+            defaultValue: '',
+            description: 'Required for redeploy: an existing environment-build-revision tag, for example staging-42-abc123def456'
         )
     }
 
@@ -43,7 +53,7 @@ pipeline {
             }
         }
 
-        stage('Select Environment') {
+        stage('Select Deployment') {
             steps {
                 script {
                     def environments = [staging: 'staging', master: 'production']
@@ -51,11 +61,27 @@ pipeline {
                         error('Unsupported application branch; select staging or master')
                     }
                     env.DEPLOY_ENV = environments[params.APP_BRANCH]
+                    def deployMode = params.DEPLOY_MODE ?: 'build-and-deploy'
+                    if (!(deployMode in ['build-and-deploy', 'redeploy'])) {
+                        error('Unsupported deployment mode; select build-and-deploy or redeploy')
+                    }
+                    env.DEPLOY_MODE = deployMode
+                    if (deployMode == 'redeploy') {
+                        def imageTag = (params.EXISTING_IMAGE_TAG ?: '').trim()
+                        if (imageTag.length() > 128 || !imageTag.matches(env.DEPLOY_ENV + '-[1-9][0-9]*-[a-f0-9]{7,40}')) {
+                            error("EXISTING_IMAGE_TAG must be an immutable ${env.DEPLOY_ENV}-BUILD-REVISION tag")
+                        }
+                        env.IMAGE_TAG = imageTag
+                        currentBuild.description = "redeploy ${env.DEPLOY_ENV}: ${env.IMAGE_TAG}"
+                    }
                 }
             }
         }
 
         stage('Checkout Application Repository') {
+            when {
+                expression { env.DEPLOY_MODE == 'build-and-deploy' }
+            }
             steps {
                 dir(env.APP_BASE_DIR) {
                     git(
@@ -69,13 +95,16 @@ pipeline {
                             returnStdout: true
                         ).trim()
                         env.IMAGE_TAG = "${env.DEPLOY_ENV}-${env.BUILD_NUMBER}-${revision}"
-                        currentBuild.description = "${env.DEPLOY_ENV}: ${env.IMAGE_TAG}"
+                        currentBuild.description = "build-and-deploy ${env.DEPLOY_ENV}: ${env.IMAGE_TAG}"
                     }
                 }
             }
         }
 
         stage('Build Application Image') {
+            when {
+                expression { env.DEPLOY_MODE == 'build-and-deploy' }
+            }
             steps {
                 dir(env.APP_BASE_DIR) {
                     sh '''docker build --target prod --file Dockerfile \
@@ -85,6 +114,9 @@ pipeline {
         }
 
         stage('Push Application Image') {
+            when {
+                expression { env.DEPLOY_MODE == 'build-and-deploy' }
+            }
             steps {
                 withCredentials([harborCredentialBinding()]) {
                     sh '''#!/bin/sh
@@ -126,7 +158,7 @@ pipeline {
 
     post {
         success {
-            echo "Completed ${env.DEPLOY_ENV}: ${env.IMAGE_TAG}"
+            echo "Completed ${env.DEPLOY_MODE} ${env.DEPLOY_ENV}: ${env.IMAGE_TAG}"
         }
         unsuccessful {
             echo 'Deployment did not complete. Inspect retained Swarm migration tasks before retrying.'
