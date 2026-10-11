@@ -42,14 +42,14 @@ The application stack is `sena-app`. Migration uses a separate, uniquely named `
 | Group variables | `ansible/group_vars/staging.yml` | `ansible/group_vars/production.yml` |
 | Manager address | `172.17.0.206` | Existing `172.17.0.239` entry must be verified |
 | Published FastCGI port | `9000` | `9000` |
-| App replicas | `1` | `1` |
+| App replicas | `2` | `2` |
 | Scheduler replicas | `1` | `1` |
 | Queue replicas | `1` | `1` |
 | Deployment directory | `/opt/core-api/deploy` | `/opt/core-api/deploy` |
 | Storage backend | NFS volume `sena-staging-storage` | Local bind mount |
 | Storage source | `172.17.0.206:/opt/core-api/core-api/storage` | `/opt/core-api/core-api/storage` |
 
-The role targets exactly one manager. Staging app, scheduler, queue, and migration tasks can run on either configured NFS client node. Production retains its local storage bind mount and manager placement constraint. Both environments initially run one replica of each long-running service; their counts are independent.
+The role targets exactly one manager. Staging app, scheduler, queue, and migration tasks can run on either configured NFS client node. Production retains its local storage bind mount and manager placement constraint. Both environments run two app replicas, one scheduler replica, and one queue replica; their counts are independent.
 
 Non-secret runtime properties belong in `ansible/group_vars/<environment>.yml` under `app_environment_overrides`. Shared defaults are in `ansible/roles/app/defaults/main.yml`. The final environment combines defaults, environment overrides, and Jenkins secrets, and sets `APP_ENV` and `APP_DEBUG=false`.
 
@@ -123,7 +123,7 @@ All three long-running services use the same immutable image, Laravel environmen
 | `sena-app_scheduler` | `php artisan schedule:work` | `app_scheduler_replicas` |
 | `sena-app_queue` | `php artisan queue:work database --tries=3 --backoff=3 --timeout=60` | `app_queue_replicas` |
 
-All counts default to `1`. To scale the app later, set `app_service_replicas: 3` at the top level of the selected environment's group variables and redeploy. Scheduler and queue counts remain unchanged. Replica counts must be positive integers. Staging replicas can share NFS across the configured nodes; production's local bind mount continues to pin all services to its manager.
+The app defaults to `2` replicas; scheduler and queue counts default to `1`. To change a service's count, set its replica variable at the top level of the selected environment's group variables and redeploy. Other service counts remain unchanged. Replica counts must be positive integers. Staging replicas can share NFS across the configured nodes; production's local bind mount continues to pin all services to its manager.
 
 Each long-running service uses `restart_policy.condition: any` with a five-second delay, including after a clean process exit. Each has a 90-second shutdown grace period. Migration remains a single task with `condition: none` so it runs once per deployment.
 
@@ -164,7 +164,7 @@ Both modes follow the deployment steps below:
 5. After migration success, it removes the migration service, deploys the app, scheduler, and queue services, prunes retired services, and waits for all three services to converge on the requested build.
 6. It removes the obsolete host `.env` file after successful convergence. Temporary registry credentials, migration configuration, and the lock are cleaned up on success or failure.
 
-Existing app, scheduler, and queue tasks continue running during migration. Each service updates one task at a time using stop-first ordering. With the initial one-replica settings, updates briefly interrupt that service. Migration failure leaves the existing application stack unchanged; services update only after migration succeeds.
+Existing app, scheduler, and queue tasks continue running during migration. Each service updates one task at a time using stop-first ordering. The app retains its other replicas during updates; updates briefly interrupt the single scheduler and queue replicas. Migration failure leaves the existing application stack unchanged; services update only after migration succeeds.
 
 ## Host nginx, ingress, and storage
 

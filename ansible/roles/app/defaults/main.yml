@@ -15,7 +15,7 @@ app_nfs_server: ''
 app_nfs_export_path: '{{ app_storage_path }}'
 
 # Independent app, scheduler, and queue service replicas.
-app_service_replicas: 1
+app_service_replicas: 2
 app_scheduler_replicas: 1
 app_queue_replicas: 1
 
