@@ -109,6 +109,28 @@
       changed_when: false
       no_log: true
 
+    - name: Inspect content-versioned Firebase secrets
+      ansible.builtin.command:
+        argv: [docker, secret, ls, --format, '{% raw %}{{.Name}}{% endraw %}']
+      register: app_firebase_secret_inspection
+      changed_when: false
+
+    - name: Create Firebase secret if this content version does not exist
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_python_interpreter | default('/usr/bin/python3') }}"
+          - -c
+          - >-
+            import base64, subprocess, sys;
+            subprocess.run(['docker', 'secret', 'create', sys.argv[1], '-'],
+            input=base64.b64decode(sys.stdin.buffer.read()), check=True)
+          - '{{ app_firebase_secret_name }}'
+        stdin: '{{ app_firebase_key_b64 }}'
+        stdin_add_newline: false
+      when: app_firebase_secret_name not in app_firebase_secret_inspection.stdout_lines
+      changed_when: true
+      no_log: true
+
     - name: Allocate a unique migration deployment name
       ansible.builtin.set_fact:
         app_migration_stack_name: >-

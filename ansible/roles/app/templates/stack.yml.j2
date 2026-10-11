@@ -7,6 +7,12 @@ services:
 {% for key, value in app_environment_variables.items() %}
       {{ key }}: {{ value | string | replace('$', '$$') | to_json }}
 {% endfor %}
+    secrets:
+      - source: firebase_key
+        target: /var/www/html/firebase-credentials.json
+        uid: "33"
+        gid: "33"
+        mode: 0400
     ports:
       - target: {{ app_fpm_port | int }}
         published: {{ app_published_port | int }}
@@ -35,7 +41,7 @@ services:
       start_period: {{ app_healthcheck_start_period | to_json }}
     deploy:
       replicas: {{ app_service_replicas | int }}
-{% if app_pin_storage_to_manager | bool %}
+{% if app_storage_backend == 'bind' %}
       placement:
         constraints:
           - {{ ('node.id == ' ~ app_storage_node_id) | to_json }}
@@ -55,6 +61,10 @@ networks:
   app_network:
     external: true
     name: {{ app_shared_network | to_json }}
+secrets:
+  firebase_key:
+    external: true
+    name: {{ app_firebase_secret_name | to_json }}
 {% if app_storage_backend == 'nfs' %}
 volumes:
   app_storage:

@@ -46,7 +46,7 @@ The role targets exactly one manager. Staging app and migration tasks can run on
 
 Non-secret runtime properties belong in `ansible/group_vars/<environment>.yml` under `app_environment_overrides`. Shared defaults are in `ansible/roles/app/defaults/main.yml`. The final environment combines defaults, environment overrides, and Jenkins secrets, and sets `APP_ENV` and `APP_DEBUG=false`.
 
-Production intentionally has incomplete endpoint and mail settings. Fill them in, confirm the manager address and SSH user in `ansible/inventory/production.ini`, then set `app_production_inventory_confirmed: true` before deploying production.
+Production's `APP_URL`, `DB_HOST`, `CGW_BASE_URL`, and `ML_BASE_URL` remain placeholders until its targets are confirmed. Mail settings use the reference Office 365 account and SMTP host. Fill the endpoint settings, confirm the manager address and SSH user in `ansible/inventory/production.ini`, then set `app_production_inventory_confirmed: true` before deploying production.
 
 ## Setup
 
@@ -65,7 +65,7 @@ Configure the Jenkins job as **Pipeline from SCM**, pointing to this repository 
 
 ## Jenkins credentials
 
-Reuse the existing `github-access`, `harbor`, and `cgw-<environment>-api-key` credentials. Create the Sena-specific credentials below. Replace `<environment>` with `staging` or `production` for each environment-specific secret.
+Reuse the existing `github-access`, `harbor`, `cgw-<environment>-api-key`, and `cgw-<environment>-firebase` credentials. Create the Sena-specific credentials below. Replace `<environment>` with `staging` or `production` for each environment-specific secret; verify the production CGW Firebase file credential exists before deploying production.
 
 | Credential ID | Type | Controller environment variable |
 | --- | --- | --- |
@@ -76,8 +76,9 @@ Reuse the existing `github-access`, `harbor`, and `cgw-<environment>-api-key` cr
 | `cgw-<environment>-api-key` | Secret text | `SENA_CGW_API_TOKEN` |
 | `sena-<environment>-mail-password` | Secret text | `SENA_MAIL_PASSWORD` |
 | `sena-<environment>-google-maps-api-key` | Secret text | `SENA_GOOGLE_MAPS_API_KEY` |
+| `cgw-<environment>-firebase` | Secret file (service-account JSON) | `SENA_FIREBASE_KEY_FILE` |
 
-Use the application's existing `APP_KEY` so encrypted application data remains readable. Ansible maps the controller variables to the application's `APP_KEY`, `DB_PASSWORD`, `CGW_API_TOKEN`, `MAIL_PASSWORD`, and `GOOGLE_MAPS_API_KEY`.
+Use the application's existing `APP_KEY` so encrypted application data remains readable. Ansible maps the text credentials to `APP_KEY`, `DB_PASSWORD`, `CGW_API_TOKEN`, `MAIL_PASSWORD`, and `GOOGLE_MAPS_API_KEY`.
 
 The existing CGW API-key credential supplies Laravel's `CGW_API_TOKEN`; a separate Sena CGW-token credential is unnecessary. Both environments use `cattleinsurance@digicontechnologies.com` as the mail username and sender address.
 
@@ -87,7 +88,11 @@ Git and Harbor credentials are shared. Deployment SSH uses the inventory user an
 
 Stack files contain runtime credentials and are written under `/opt/core-api/deploy` with restricted permissions. Secrets are excluded from Ansible output and command-line extra variables.
 
-Application credentials are explicit service environment variables rendered into the stack, rather than a host `.env` file or Docker secret objects. They remain visible to privileged Docker inspection. Stack files are root-owned with mode `0600`; the deployment directory is mode `0700` and separate from the nginx-readable storage path. Temporary Docker credentials and migration configuration are removed on normal completion or handled failure.
+Text credentials are explicit service environment variables rendered into the stack. They remain visible to privileged Docker inspection. Stack files are root-owned with mode `0600`; the deployment directory is mode `0700` and separate from shared storage. Temporary Docker credentials and migration configuration are removed on normal completion or handled failure.
+
+The Firebase file credential is validated on the controller and sent through standard input to create a content-versioned Swarm secret, following the CGW deployment pattern. Both the app and migration service mount it read-only at `/var/www/html/firebase-credentials.json`, with UID/GID `33:33` and mode `0400`. `FIREBASE_CREDENTIALS=firebase-credentials.json` remains compatible with Laravel's `base_path()` lookup. The JSON is kept outside public storage and is not copied to NFS or included in the stack environment. Old secret versions are retained for rollback; remove only versions no longer needed by deployments or retained migration services.
+
+The application must read `project_id` from this JSON; a separate `FIREBASE_PROJECT_ID` is not supplied. Shared non-secret settings live in `ansible/roles/app/defaults/main.yml`, with endpoint and diagnostic overrides in each environment's group vars. Staging retains debug logging; production uses info logging. Pulse is disabled in both environments as in the reference file. `SANCTUM_STATEFUL_DOMAINS` is `agrotech.digicontechnologies.com` for staging and `mci.siplc.org` for production. `LOG_VIEWER_PASSWORD` is deliberately omitted for both environments. The local `env.production` reference is not deployed; its `APP_ENV=local` and `APP_DEBUG=true` are replaced by the selected environment and `APP_DEBUG=false`.
 
 ## Required application image support
 
@@ -96,6 +101,8 @@ The selected application branch must contain its production Dockerfile, `docker/
 The project Dockerfile's `prod` target includes application code and production Composer dependencies. The image preserves PostgreSQL, GD, Imagick, `intl`, `mbstring`, `exif`, `pcntl`, and the other PHP extensions previously supplied by the CI/CD role. `docker/uploads.ini` supplies the existing upload limits.
 
 The entrypoint waits for the database with a bounded timeout and reads credentials through environment variables. It then executes the service command: Artisan for the migration task, or Supervisor for the app. Migration logic and the `RUN_MIGRATIONS` flag are no longer part of the entrypoint.
+
+The selected application branch must also derive the Firebase project ID from the credentials JSON. Images served through PHP-FPM require a Laravel `/storage/{path}` route that returns files only from `storage/app/public` and rejects paths or symlinks escaping that directory.
 
 Docker probes the PHP-FPM listening socket. Ansible verifies service convergence and the requested image tag. These checks do not verify ingress reachability, Laravel request handling, or the health of each Supervisor worker. The current implementation permits one app replica; scaling also requires a scheduler and worker plan.
 
@@ -106,7 +113,7 @@ In **Build with Parameters**, select `APP_BRANCH=staging` for staging or `APP_BR
 1. Jenkins checks out the selected application branch and builds the Dockerfile's `prod` target.
 2. It pushes the build tag using temporary registry credentials.
 3. Ansible validates the environment, manager, network, and both stack templates before deployment changes.
-4. It acquires a deployment lock, prepares Laravel storage directories, and creates staging's NFS-backed Docker volume on the manager if absent. Existing manager volumes must match the configured NFS options. It then runs one uniquely named migration task using the same image and storage as the app. The task runs `php artisan migrate --force --no-interaction` with automatic restarts disabled.
+4. It acquires a deployment lock, prepares Laravel storage directories, and creates staging's NFS-backed Docker volume on the manager if absent. Existing manager volumes must match the configured NFS options. It creates or reuses the content-versioned Firebase secret, then runs one uniquely named migration task using the same image, secret, and storage as the app. The task runs `php artisan migrate --force --no-interaction` with automatic restarts disabled.
 5. After migration success, it removes the migration service, deploys the app stack, prunes the retired container nginx service, and waits for the requested build to converge.
 6. It removes the obsolete host `.env` file after successful convergence. Temporary registry credentials, migration configuration, and the lock are cleaned up on success or failure.
 
@@ -119,7 +126,7 @@ The app stack publishes TCP port `9000` through Swarm's default ingress routing 
 Adapt these locations inside the host's existing TLS server block, keeping the frontend upstream on port `8082`:
 
 ```nginx
-location /api/ {
+location ~ ^/(api|storage)/ {
     include /etc/nginx/fastcgi_params;
     fastcgi_pass 127.0.0.1:9000;
     fastcgi_param SCRIPT_FILENAME /var/www/html/public/index.php;
@@ -130,18 +137,13 @@ location /api/ {
     fastcgi_buffers 16 16k;
     fastcgi_buffer_size 32k;
 }
-
-location ^~ /storage/ {
-    alias /opt/core-api/core-api/storage/app/public/;
-    autoindex off;
-}
 ```
 
-The FastCGI script path is the path inside the application container. Use a reachable Swarm node address instead of `127.0.0.1` if nginx runs on another host. Keep nginx's `client_max_body_size 150M`; the image preserves `upload_max_filesize=20M` and `post_max_size=150M`.
+The FastCGI script path is the path inside the application container. Replace the previous `/api/` and `/storage/` proxy locations with this combined location. Laravel handles public uploads through its `/storage/{path}` route, so nginx does not need storage access. Use a reachable Swarm node address instead of `127.0.0.1` if nginx runs on another host. Keep nginx's `client_max_body_size 150M`; the image preserves `upload_max_filesize=20M` and `post_max_size=150M`.
 
 Staging uses the named Docker volume `sena-staging-storage`, backed by the manager's NFS export at `/opt/core-api/core-api/storage`. Both stack templates declare the same explicit volume name and NFS driver options, so migration and app tasks use the same files across separate stacks. Docker creates the matching volume on a worker when a task is scheduled there. Volume population from the image is disabled with `nocopy: true`.
 
-Existing files stay in their current manager directory; no copy or move is needed. Host nginx on the manager continues reading `/opt/core-api/core-api/storage/app/public/` directly. The shared volume remains mounted at `/var/www/html/storage` inside the application. Production retains its existing bind mount.
+Existing files stay in their current manager directory; no copy or move is needed. The shared volume remains mounted at `/var/www/html/storage` inside the application, where Laravel reads uploaded images. Production retains its existing bind mount. Both templates apply the manager node constraint only when `app_storage_backend: bind`; NFS tasks can run on either configured client node. There is no separate placement toggle to keep in sync with the storage backend.
 
 Review and validate host nginx changes with `sudo nginx -t` before reloading. This pipeline does not configure or reload host nginx.
 
@@ -201,7 +203,7 @@ sudo ufw allow from 172.17.0.206 to 172.17.0.206 port 2049 proto tcp
 
 Apply equivalent rules if another firewall is used. Only the manager runs `nfs-kernel-server` and `exportfs`; the worker requires the NFS client package.
 
-The staging settings are in `ansible/group_vars/staging.yml`: `app_storage_backend: nfs`, the server and export path, the shared volume name, and `app_pin_storage_to_manager: false`. Docker uses `nfsvers=4,rw,hard`. Manual Docker volume creation and host `fstab` entries are unnecessary for this deployment path; Ansible and the stack declarations manage the volume. Keep eligible nodes limited to the configured NFS clients.
+The staging settings are in `ansible/group_vars/staging.yml`: `app_storage_backend: nfs`, the server and export path, and the shared volume name. Docker uses `nfsvers=4,rw,hard`. Manual Docker volume creation and host `fstab` entries are unnecessary for this deployment path; Ansible and the stack declarations manage the volume. Keep eligible nodes limited to the configured NFS clients.
 
 ## Manual Ansible commands
 
@@ -218,6 +220,7 @@ Supply credentials through these controller environment variables, or equivalent
 | `SENA_CGW_API_TOKEN` | `app_secret_environment.CGW_API_TOKEN` |
 | `SENA_MAIL_PASSWORD` | `app_secret_environment.MAIL_PASSWORD` |
 | `SENA_GOOGLE_MAPS_API_KEY` | `app_secret_environment.GOOGLE_MAPS_API_KEY` |
+| `SENA_FIREBASE_KEY_FILE` | `app_firebase_key_file` (controller path to the service-account JSON) |
 
 Do not put passwords or API keys in command-line extra vars. The Jenkins helper passes only non-secret image settings; SSH and sudo use the host configuration and inventory. Unattended Jenkins deployment needs passwordless sudo or a root connection. Interactive local deployment can use `--ask-become-pass`.
 
@@ -353,7 +356,7 @@ The external overlay network and persisted storage are separate resources. Stack
 | NFS mount or storage permission error | Verify the manager export, client package, TCP port 2049, and matching `www-data` IDs |
 | Existing storage volume has different options | Inspect its configuration and users before reusing the name; Docker does not replace existing volume options |
 | Host nginx returns `502` | Verify FastCGI configuration, the published port, PHP-FPM task health, and the container script path |
-| Uploaded files return `404` | Check the nginx storage alias and whether nginx and the app see the same storage content |
+| Uploaded files return `404` | Check nginx forwards `/storage/` through FastCGI, the Laravel file-serving route exists, and the app sees the files under `storage/app/public` |
 | Database readiness times out | Verify database settings, credentials, connectivity, and `DB_WAIT_TIMEOUT` |
 | Update paused or wrong image running | Inspect task errors and `UpdateStatus`; convergence checks reject these states |
 | Retained migration blocks deployment | Review its tasks and database state, remove the reviewed migration stack, then retry |
@@ -362,11 +365,13 @@ The external overlay network and persisted storage are separate resources. Stack
 
 ## Local checks
 
+Use a Python environment with `ansible-core`, Jinja2, and PyYAML installed. The tests include Ansible variable rendering, Firebase validation and rotation, and both storage placement modes.
+
 ```sh
 SENA_PROJECT_ROOT=/absolute/path/to/sena-project python3 -m unittest discover -s tests -v
 ```
 
-The local tests require `PyYAML` and `Jinja2` and cover credential rendering, deployment argument handling, migration failures, convergence, and entrypoint behavior. If Docker CLI is available, stack rendering is also checked with `docker stack config`, which does not require a daemon. Tests are local assets and are not included in repository checkouts.
+The local tests also cover credential rendering, deployment argument handling, migration failures, convergence, and entrypoint behavior. If Docker CLI is available, stack rendering is checked with `docker stack config`, which does not require a daemon. Tests are local assets and are not included in repository checkouts.
 
 ## Repository layout
 

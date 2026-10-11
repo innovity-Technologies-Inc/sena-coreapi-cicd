@@ -115,7 +115,8 @@ pipeline {
                     string(credentialsId: "sena-${env.DEPLOY_ENV}-db-password", variable: 'SENA_DB_PASSWORD'),
                     string(credentialsId: "cgw-${env.DEPLOY_ENV}-api-key", variable: 'SENA_CGW_API_TOKEN'),
                     string(credentialsId: "sena-${env.DEPLOY_ENV}-mail-password", variable: 'SENA_MAIL_PASSWORD'),
-                    string(credentialsId: "sena-${env.DEPLOY_ENV}-google-maps-api-key", variable: 'SENA_GOOGLE_MAPS_API_KEY')
+                    string(credentialsId: "sena-${env.DEPLOY_ENV}-google-maps-api-key", variable: 'SENA_GOOGLE_MAPS_API_KEY'),
+                    file(credentialsId: "cgw-${env.DEPLOY_ENV}-firebase", variable: 'SENA_FIREBASE_KEY_FILE')
                 ]) {
                     sh 'sh scripts/deploy-from-jenkins.sh'
                 }

@@ -3,23 +3,27 @@
 app_environment: production
 app_production_inventory_confirmed: false
 
-# Fill these production settings and confirm the inventory before deployment.
+# Production overrides; common runtime settings live in the role defaults.
+# Fill the endpoint settings and confirm the inventory before deployment.
 app_environment_overrides:
-  # Application identity and locale.
+  # Public application endpoint.
   APP_URL: ''
 
-  # PostgreSQL connection and startup wait.
-  DB_HOST: ''
-  DB_DATABASE: sena
-  DB_USERNAME: sena
+  # Sanctum stateful frontend domain.
+  SANCTUM_STATEFUL_DOMAINS: mci.siplc.org
 
-  # Outbound mail.
-  MAIL_HOST: ''
-  MAIL_USERNAME: cattleinsurance@digicontechnologies.com
-  MAIL_FROM_ADDRESS: cattleinsurance@digicontechnologies.com
+  # PostgreSQL endpoint.
+  DB_HOST: ''
+
+  # Outbound mail endpoint.
+  MAIL_HOST: smtp.office365.com
 
   # Charging gateway endpoint.
   CGW_BASE_URL: ''
 
-  # ML endpoint, retries, and feature flags.
+  # ML endpoint.
   ML_BASE_URL: ''
+
+  # Production diagnostics; Pulse stays disabled as in env.production.
+  LOG_LEVEL: info
+  PULSE_ENABLED: 'false'

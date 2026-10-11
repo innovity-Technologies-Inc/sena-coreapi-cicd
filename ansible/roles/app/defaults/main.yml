@@ -8,7 +8,6 @@ app_shared_network: sena-overlay-network
 app_dir: /opt/core-api/core-api
 app_storage_path: '{{ app_dir }}/storage'
 app_storage_backend: bind
-app_pin_storage_to_manager: true
 
 # NFS-backed Docker volume; enabled per environment.
 app_storage_volume_name: '{{ app_stack_name }}-storage'
@@ -31,17 +30,29 @@ app_harbor_registry: imageregistry.gen-itech.com
 app_harbor_username: '{{ lookup(''ansible.builtin.env'', ''HARBOR_USER'') }}'
 app_harbor_password: '{{ lookup(''ansible.builtin.env'', ''HARBOR_PASSWORD'') }}'
 
+# Jenkins Firebase file and content-versioned Swarm secret.
+app_firebase_key_file: '{{ lookup(''ansible.builtin.env'', ''SENA_FIREBASE_KEY_FILE'') }}'
+app_firebase_secret_name: >-
+  {{ app_stack_name | truncate(22, true, '') }}-firebase-{{ app_firebase_key_b64 | hash('sha256') | truncate(32, true, '') }}
+
 # Non-secret Laravel defaults, overridden by the selected environment.
 app_environment_defaults:
   # Application identity and locale.
-  APP_NAME: Sena Project
+  APP_NAME: Sena
   APP_URL: ''
   APP_LOCALE: en
   APP_FALLBACK_LOCALE: en
+  APP_FAKER_LOCALE: en_US
+  APP_MAINTENANCE_DRIVER: file
+  VITE_APP_NAME: Sena
+
+  # Password hashing.
+  BCRYPT_ROUNDS: '12'
 
   # Application logging.
   LOG_CHANNEL: stack
   LOG_STACK: single
+  LOG_DEPRECATIONS_CHANNEL: 'null'
   LOG_LEVEL: info
 
   # PostgreSQL connection and startup wait.
@@ -66,21 +77,62 @@ app_environment_defaults:
 
   # Cache backends.
   CACHE_STORE: database
+  MEMCACHED_HOST: 127.0.0.1
+  REDIS_CLIENT: phpredis
+  REDIS_HOST: 127.0.0.1
+  REDIS_PASSWORD: 'null'
+  REDIS_PORT: '6379'
 
   # Outbound mail.
   MAIL_MAILER: smtp
   MAIL_HOST: ''
   MAIL_PORT: '587'
   MAIL_SCHEME: smtp
-  MAIL_USERNAME: ''
-  MAIL_FROM_ADDRESS: ''
-  MAIL_FROM_NAME: Sena Project
+  MAIL_ENCRYPTION: tls
+  MAIL_USERNAME: cattleinsurance@digicontechnologies.com
+  MAIL_FROM_ADDRESS: cattleinsurance@digicontechnologies.com
+  MAIL_FROM_NAME: Sena Microfinance
+
+  # Optional object storage; no AWS credentials configured in the reference.
+  AWS_ACCESS_KEY_ID: ''
+  AWS_SECRET_ACCESS_KEY: ''
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_BUCKET: ''
+  AWS_USE_PATH_STYLE_ENDPOINT: 'false'
+
+  # Firebase credentials are mounted beside the application, outside public storage.
+  FIREBASE_CREDENTIALS: firebase-credentials.json
 
   # Charging gateway endpoint.
   CGW_BASE_URL: ''
 
   # ML endpoint, retries, and feature flags.
   ML_BASE_URL: ''
+  ML_CONNECT_TIMEOUT: '10'
+  ML_TIMEOUT: '60'
+  ML_RETRY_ATTEMPTS: '1'
+  ML_RETRY_DELAY: '100'
+  ENABLE_ML_2PC: 'true'
+  ENABLE_ML_AUDIT_LOGS: 'true'
+
+  # Application feature flags.
+  ENABLE_SAVE_MUZZLE_PHOTOS: 'true'
+  ENABLE_CLAIM_VET_REVIEW: 'false'
+
+  # Pulse monitoring and retention; disabled in both environments.
+  PULSE_ENABLED: 'false'
+  PULSE_PATH: api/pulse
+  PULSE_STORAGE_KEEP: 24 hours
+  PULSE_INGEST_KEEP: 24 hours
+  PULSE_SLOW_JOBS_THRESHOLD: '500'
+  PULSE_SLOW_OUTGOING_REQUESTS_THRESHOLD: '500'
+  PULSE_SLOW_QUERIES_THRESHOLD: '100'
+  PULSE_SLOW_REQUESTS_THRESHOLD: '500'
+
+  # Log viewer and request tracing.
+  LOG_VIEWER_ENABLED: 'true'
+  LOG_VIEWER_PATH: api/logs
+  ENABLE_API_REQUEST_LOGGING: 'true'
 
 # Environment-specific non-secret settings live in group_vars.
 app_environment_overrides: {}

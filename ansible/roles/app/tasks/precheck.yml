@@ -27,7 +27,6 @@
       - app_deployment_timeout | int > 0
       - app_storage_path is match('^/')
       - app_storage_backend in ['bind', 'nfs']
-      - app_storage_backend != 'bind' or app_pin_storage_to_manager | bool
       - app_environment != 'production' or app_production_inventory_confirmed | default(false) | bool
     fail_msg: Supply an immutable build tag, complete environment settings, and one confirmed manager.
   no_log: true
@@ -73,12 +72,30 @@
       - app_secret_environment.CGW_API_TOKEN | length > 0
       - app_secret_environment.MAIL_PASSWORD | length > 0
       - app_secret_environment.GOOGLE_MAPS_API_KEY | length > 0
+      - app_firebase_key_file | length > 0
+      - app_environment_variables.FIREBASE_CREDENTIALS == 'firebase-credentials.json'
       - app_environment_overrides.keys() | intersect(app_secret_environment.keys()) | length == 0
       - app_environment_variables.keys() | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
       - app_environment_variables.MAIL_MAILER != 'smtp' or app_environment_variables.MAIL_HOST | length > 0
       - app_environment_variables.MAIL_MAILER != 'smtp' or app_environment_variables.MAIL_USERNAME | length > 0
       - app_environment_variables.MAIL_FROM_ADDRESS | length > 0
     fail_msg: Supply the environment-specific Jenkins credentials and mail settings.
+  no_log: true
+
+- name: Load Firebase JSON from the Jenkins file credential on the controller
+  ansible.builtin.set_fact:
+    app_firebase_key_b64: "{{ lookup('ansible.builtin.file', app_firebase_key_file, rstrip=false) | b64encode }}"
+  no_log: true
+
+- name: Validate Firebase credentials before deployment
+  ansible.builtin.assert:
+    that:
+      - (app_firebase_key_b64 | b64decode | from_json).type == 'service_account'
+      - (app_firebase_key_b64 | b64decode | from_json).project_id | length > 0
+      - (app_firebase_key_b64 | b64decode | from_json).private_key | length > 0
+      - (app_firebase_key_b64 | b64decode | from_json).client_email | length > 0
+      - app_firebase_key_b64 | b64decode | length < 512000
+      - app_firebase_secret_name is match('^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$')
   no_log: true
 
 - name: Check Docker CLI and daemon access
@@ -101,20 +118,21 @@
 - name: Select the local storage node
   ansible.builtin.set_fact:
     app_storage_node_id: '{{ (app_swarm_info.stdout | from_json).NodeID }}'
+  when: app_storage_backend == 'bind'
 
 - name: Inspect storage node availability
   ansible.builtin.command:
     argv: [docker, node, inspect, '{{ app_storage_node_id }}']
   register: app_storage_node_info
   changed_when: false
-  when: app_pin_storage_to_manager | bool
+  when: app_storage_backend == 'bind'
 
 - name: Require a ready storage node accepting tasks
   ansible.builtin.assert:
     that:
       - (app_storage_node_info.stdout | from_json)[0].Status.State == 'ready'
       - (app_storage_node_info.stdout | from_json)[0].Spec.Availability == 'active'
-  when: app_pin_storage_to_manager | bool
+  when: app_storage_backend == 'bind'
 
 - name: Inspect application network
   ansible.builtin.command:
