@@ -109,7 +109,7 @@ The project Dockerfile's `prod` target includes application code and production 
 
 The entrypoint waits for the database with a bounded timeout and reads credentials through environment variables. It then executes the service command: PHP-FPM for the app, or Artisan for the scheduler, queue, and migration services. The stack overrides the image command explicitly; Supervisor is not used. Migration logic and the `RUN_MIGRATIONS` flag are no longer part of the entrypoint.
 
-The selected application branch must also derive the Firebase project ID from the credentials JSON. Images served through PHP-FPM require a Laravel `/storage/{path}` route that returns files only from `storage/app/public` and rejects paths or symlinks escaping that directory.
+The selected application branch must also derive the Firebase project ID from the credentials JSON. Host nginx serves public uploads directly from the shared storage directory.
 
 Docker probes the PHP-FPM listening socket on the app service. The scheduler and queue run Artisan directly as UID/GID `33:33`, with the PHP-FPM health check disabled. Swarm monitors their main process exits, and Ansible verifies all three services have the requested image and running replica counts. These checks do not verify ingress reachability, Laravel request handling, a stuck worker, or successful job processing.
 
@@ -170,10 +170,20 @@ Existing app, scheduler, and queue tasks continue running during migration. Each
 
 The app stack publishes TCP port `9000` through Swarm's default ingress routing mesh to PHP-FPM port `9000`. Host nginx must use FastCGI for backend requests; its former HTTP upstream on port `8081` must be replaced when deploying this stack. Restrict access to the published FastCGI port to trusted nginx hosts.
 
-Adapt these locations inside the host's existing TLS server block, keeping the frontend upstream on port `8082`:
+Adapt these directives inside the host's existing HTTPS `server` block, keeping the frontend upstream on port `8082`. Put the rewrite at server level, outside the location blocks:
 
 ```nginx
-location ~ ^/(api|storage)/ {
+# Normalize frontend-prefixed storage paths before choosing a location.
+rewrite ^/(?!api/|storage/)(?:[^/]+/)+?storage/(.*)$ /storage/$1 last;
+
+# Serve public uploads directly from shared storage.
+location ^~ /storage/ {
+    alias /opt/core-api/core-api/storage/app/public/;
+    autoindex off;
+}
+
+# Backend API uses PHP-FPM through Swarm ingress.
+location ^~ /api/ {
     include /etc/nginx/fastcgi_params;
     fastcgi_pass 127.0.0.1:9000;
     fastcgi_param SCRIPT_FILENAME /var/www/html/public/index.php;
@@ -186,7 +196,13 @@ location ~ ^/(api|storage)/ {
 }
 ```
 
-The FastCGI script path is the path inside the application container. Replace the previous `/api/` and `/storage/` proxy locations with this combined location. Laravel handles public uploads through its `/storage/{path}` route, so nginx does not need storage access. Use a reachable Swarm node address instead of `127.0.0.1` if nginx runs on another host. Keep nginx's `client_max_body_size 150M`; the image preserves `upload_max_filesize=20M` and `post_max_size=150M`.
+The rewrite changes `/sena-admin/allcows/storage/cow_photos/2026/10/WDWvxUb7pcfsICs8yXFb2jOl1xjOPj0MVnDJG2pa.jpg` internally to `/storage/cow_photos/2026/10/WDWvxUb7pcfsICs8yXFb2jOl1xjOPj0MVnDJG2pa.jpg`. The `last` flag selects the storage location using the rewritten URI; nginx reads the file from `storage/app/public/cow_photos/2026/10/`. The browser URL stays unchanged and existing query parameters are preserved. The negative lookahead excludes paths already starting with `/api/` or `/storage/`, so API routing and direct storage URLs remain unchanged, including files inside a subdirectory named `storage`.
+
+Storage requests use the alias location, and API requests keep their original URI from `fastcgi_params`. A FastCGI URI map or custom `REQUEST_URI` parameter is unnecessary. Frontend image URLs should preferably start with `/storage/` to avoid depending on the current page path.
+
+The nginx host must have read access to `/opt/core-api/core-api/storage/app/public/`. On the staging manager this is the local NFS export directory, containing the same files used by app tasks on either node. If nginx runs on another host, mount that NFS export there and adapt the alias path. Keep the trailing slash on both the storage location and alias directory.
+
+The FastCGI script path is the path inside the application container. Replace the former API HTTP proxy with the FastCGI location above. Use a reachable Swarm node address instead of `127.0.0.1` if nginx runs on another host. Keep nginx's `client_max_body_size 150M`; the image preserves `upload_max_filesize=20M` and `post_max_size=150M`.
 
 Staging uses the named Docker volume `sena-staging-storage`, backed by the manager's NFS export at `/opt/core-api/core-api/storage`. Both stack templates declare the same explicit volume name and NFS driver options, so migration and app tasks use the same files across separate stacks. Docker creates the matching volume on a worker when a task is scheduled there. Volume population from the image is disabled with `nocopy: true`.
 
@@ -409,7 +425,7 @@ The external overlay network and persisted storage are separate resources. Stack
 | NFS mount or storage permission error | Verify the manager export, client package, TCP port 2049, and matching `www-data` IDs |
 | Existing storage volume has different options | Inspect its configuration and users before reusing the name; Docker does not replace existing volume options |
 | Host nginx returns `502` | Verify FastCGI configuration, the published port, PHP-FPM task health, and the container script path |
-| Uploaded files return `404` | Check nginx forwards `/storage/` through FastCGI, the Laravel file-serving route exists, and the app sees the files under `storage/app/public` |
+| Uploaded files return `404` or `403` | Check the nginx alias path, public file existence, directory traversal/read permissions, and the NFS mount if nginx runs on another host |
 | Database readiness times out | Verify database settings, credentials, connectivity, and `DB_WAIT_TIMEOUT` |
 | Update paused or wrong image running | Inspect task errors and `UpdateStatus`; convergence checks reject these states |
 | Scheduler or queue repeatedly restarts | Inspect that service's logs, database/cache connectivity, and the selected image's Artisan support |
