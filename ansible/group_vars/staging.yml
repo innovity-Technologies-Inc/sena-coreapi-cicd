@@ -2,6 +2,13 @@
 # Deployment environment and inventory confirmation.
 app_environment: staging
 
+# Shared storage exported by the staging manager.
+app_storage_backend: nfs
+app_nfs_server: 172.17.0.206
+app_nfs_export_path: /opt/core-api/core-api/storage
+app_storage_volume_name: sena-staging-storage
+app_pin_storage_to_manager: false
+
 # Staging runtime settings; secrets come from Jenkins credentials.
 app_environment_overrides:
   # Application identity and locale.

@@ -26,9 +26,42 @@
       - app_migration_timeout | int > 0
       - app_deployment_timeout | int > 0
       - app_storage_path is match('^/')
+      - app_storage_backend in ['bind', 'nfs']
+      - app_storage_backend != 'bind' or app_pin_storage_to_manager | bool
       - app_environment != 'production' or app_production_inventory_confirmed | default(false) | bool
     fail_msg: Supply an immutable build tag, complete environment settings, and one confirmed manager.
   no_log: true
+
+- name: Validate manager-owned NFS storage settings
+  ansible.builtin.assert:
+    that:
+      - app_nfs_server == ansible_host | default(inventory_hostname)
+      - app_nfs_export_path == app_storage_path
+      - app_storage_volume_name is match('^[A-Za-z0-9][A-Za-z0-9_.-]+$')
+    fail_msg: NFS storage must use the selected manager's existing storage directory and a valid volume name.
+  when: app_storage_backend == 'nfs'
+
+- name: Inspect the NFS owner's user ID
+  ansible.builtin.command:
+    argv: [id, -u, www-data]
+  register: app_storage_uid
+  changed_when: false
+  when: app_storage_backend == 'nfs'
+
+- name: Inspect the NFS owner's group ID
+  ansible.builtin.command:
+    argv: [getent, group, www-data]
+  register: app_storage_group
+  changed_when: false
+  when: app_storage_backend == 'nfs'
+
+- name: Require NFS ownership matching the Laravel image
+  ansible.builtin.assert:
+    that:
+      - app_storage_uid.stdout | trim == '33'
+      - app_storage_group.stdout.split(':')[2] == '33'
+    fail_msg: The NFS server's www-data user and group must both use ID 33.
+  when: app_storage_backend == 'nfs'
 
 - name: Require Jenkins credentials without a repository fallback
   ansible.builtin.assert:

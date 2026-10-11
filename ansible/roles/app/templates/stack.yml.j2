@@ -13,9 +13,17 @@ services:
         protocol: tcp
         mode: ingress
     volumes:
+{% if app_storage_backend == 'nfs' %}
+      - type: volume
+        source: app_storage
+        target: /var/www/html/storage
+        volume:
+          nocopy: true
+{% else %}
       - type: bind
         source: {{ app_storage_path | to_json }}
         target: /var/www/html/storage
+{% endif %}
     networks:
       - app_network
     stop_grace_period: 90s
@@ -47,3 +55,13 @@ networks:
   app_network:
     external: true
     name: {{ app_shared_network | to_json }}
+{% if app_storage_backend == 'nfs' %}
+volumes:
+  app_storage:
+    name: {{ app_storage_volume_name | to_json }}
+    driver: local
+    driver_opts:
+      type: nfs
+      o: {{ ('addr=' ~ app_nfs_server ~ ',nfsvers=4,rw,hard') | to_json }}
+      device: {{ (':' ~ app_nfs_export_path) | to_json }}
+{% endif %}

@@ -15,11 +15,13 @@
 
 - name: Migrate and deploy with isolated registry credentials
   block:
-    - name: Ensure the existing storage bind mount has Laravel directories
+    - name: Ensure Laravel storage directories exist
       ansible.builtin.file:
         path: '{{ app_storage_path }}/{{ item }}'
         state: directory
-        mode: '0777'
+        owner: "{{ 'www-data' if app_storage_backend == 'nfs' else omit }}"
+        group: "{{ 'www-data' if app_storage_backend == 'nfs' else omit }}"
+        mode: "{{ '2770' if app_storage_backend == 'nfs' else '0777' }}"
       loop:
         - ''
         - logs
@@ -31,6 +33,57 @@
         - app
         - app/public
         - app/private
+
+    - name: List existing Docker volumes
+      ansible.builtin.command:
+        argv: [docker, volume, ls, --format, '{% raw %}{{.Name}}{% endraw %}']
+      register: app_storage_volumes
+      changed_when: false
+      when: app_storage_backend == 'nfs'
+
+    - name: Inspect an existing NFS volume before reusing it
+      ansible.builtin.command:
+        argv: [docker, volume, inspect, '{{ app_storage_volume_name }}']
+      register: app_storage_volume_info
+      changed_when: false
+      when:
+        - app_storage_backend == 'nfs'
+        - app_storage_volume_name in app_storage_volumes.stdout_lines
+
+    - name: Require an existing volume to use the configured NFS export
+      ansible.builtin.assert:
+        that:
+          - (app_storage_volume_info.stdout | from_json)[0].Driver == 'local'
+          - ((app_storage_volume_info.stdout | from_json)[0].Options | default({}, true)) == app_expected_storage_options
+        fail_msg: The existing storage volume has different options. Review it before reusing its name.
+      vars:
+        app_expected_storage_options:
+          type: nfs
+          o: 'addr={{ app_nfs_server }},nfsvers=4,rw,hard'
+          device: ':{{ app_nfs_export_path }}'
+      when:
+        - app_storage_backend == 'nfs'
+        - app_storage_volume_name in app_storage_volumes.stdout_lines
+
+    - name: Create the manager's NFS-backed Docker volume if absent
+      ansible.builtin.command:
+        argv:
+          - docker
+          - volume
+          - create
+          - --driver
+          - local
+          - --opt
+          - type=nfs
+          - --opt
+          - 'o=addr={{ app_nfs_server }},nfsvers=4,rw,hard'
+          - --opt
+          - 'device=:{{ app_nfs_export_path }}'
+          - '{{ app_storage_volume_name }}'
+      changed_when: true
+      when:
+        - app_storage_backend == 'nfs'
+        - app_storage_volume_name not in app_storage_volumes.stdout_lines
 
     - name: Create temporary Docker credential directory
       ansible.builtin.tempfile:

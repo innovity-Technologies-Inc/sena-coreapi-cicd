@@ -4,10 +4,16 @@ app_stack_name: sena-app
 app_stack_path: /opt/core-api/deploy
 app_shared_network: sena-overlay-network
 
-# Existing storage bind mount; the path can later be mounted through NFS.
+# Storage backend and manager-local storage path.
 app_dir: /opt/core-api/core-api
 app_storage_path: '{{ app_dir }}/storage'
+app_storage_backend: bind
 app_pin_storage_to_manager: true
+
+# NFS-backed Docker volume; enabled per environment.
+app_storage_volume_name: '{{ app_stack_name }}-storage'
+app_nfs_server: ''
+app_nfs_export_path: '{{ app_storage_path }}'
 
 # Single app replica with published FastCGI ingress.
 app_service_replicas: 1
