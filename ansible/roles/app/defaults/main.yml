@@ -1,13 +1,94 @@
-application_networks: sena
-appication_port: 9000
-nginx_host_port: 8081
-nginx_container_port: 80
-db_port: 5432
-base_dir: /opt/core-api
+---
+# Swarm stack and overlay network.
+app_stack_name: sena-app
+app_stack_path: /opt/core-api/deploy
+app_shared_network: sena-overlay-network
+
+# Existing storage bind mount; the path can later be mounted through NFS.
 app_dir: /opt/core-api/core-api
-database_dir: /opt/core-api/db
-nginx_dir: /opt/core-api/nginx
-nginx_log_dir: /opt/core-api/nginx/logs
-fpm_dir: /opt/core-api/php-fpm
-third_party_service_simul: /opt/core-api/third-party-service-simul
-shared_network: "sena-overlay-network"
+app_storage_path: '{{ app_dir }}/storage'
+app_pin_storage_to_manager: true
+
+# Single app replica with published FastCGI ingress.
+app_service_replicas: 1
+app_fpm_port: 9000
+app_published_port: 9000
+
+# Deployment waits and health checks.
+app_migration_timeout: 600
+app_deployment_timeout: 600
+app_healthcheck_start_period: 30s
+
+# Image registry and Jenkins Harbor credentials.
+app_image_registry: imageregistry.gen-itech.com/senacoreapi/coreapi
+app_harbor_registry: imageregistry.gen-itech.com
+app_harbor_username: '{{ lookup(''ansible.builtin.env'', ''HARBOR_USER'') }}'
+app_harbor_password: '{{ lookup(''ansible.builtin.env'', ''HARBOR_PASSWORD'') }}'
+
+# Non-secret Laravel defaults, overridden by the selected environment.
+app_environment_defaults:
+  # Application identity and locale.
+  APP_NAME: Sena Project
+  APP_URL: ''
+  APP_LOCALE: en
+  APP_FALLBACK_LOCALE: en
+
+  # Application logging.
+  LOG_CHANNEL: stack
+  LOG_STACK: single
+  LOG_LEVEL: info
+
+  # PostgreSQL connection and startup wait.
+  DB_CONNECTION: pgsql
+  DB_HOST: ''
+  DB_PORT: '5432'
+  DB_DATABASE: sena
+  DB_USERNAME: sena
+  DB_WAIT_TIMEOUT: '120'
+
+  # Session settings.
+  SESSION_DRIVER: database
+  SESSION_LIFETIME: '120'
+  SESSION_ENCRYPT: 'false'
+  SESSION_PATH: /
+  SESSION_DOMAIN: 'null'
+
+  # Storage, queues, and broadcasting.
+  BROADCAST_CONNECTION: log
+  FILESYSTEM_DISK: local
+  QUEUE_CONNECTION: database
+
+  # Cache backends.
+  CACHE_STORE: database
+
+  # Outbound mail.
+  MAIL_MAILER: smtp
+  MAIL_HOST: ''
+  MAIL_PORT: '587'
+  MAIL_SCHEME: smtp
+  MAIL_USERNAME: ''
+  MAIL_FROM_ADDRESS: ''
+  MAIL_FROM_NAME: Sena Project
+
+  # Charging gateway endpoint.
+  CGW_BASE_URL: ''
+
+  # ML endpoint, retries, and feature flags.
+  ML_BASE_URL: ''
+
+# Environment-specific non-secret settings live in group_vars.
+app_environment_overrides: {}
+
+# Jenkins supplies secrets; no repository credential fallback.
+app_secret_environment:
+  APP_KEY: '{{ lookup(''ansible.builtin.env'', ''SENA_APP_KEY'') }}'
+  DB_PASSWORD: '{{ lookup(''ansible.builtin.env'', ''SENA_DB_PASSWORD'') }}'
+  CGW_API_TOKEN: '{{ lookup(''ansible.builtin.env'', ''SENA_CGW_API_TOKEN'') }}'
+  MAIL_PASSWORD: '{{ lookup(''ansible.builtin.env'', ''SENA_MAIL_PASSWORD'') }}'
+  GOOGLE_MAPS_API_KEY: '{{ lookup(''ansible.builtin.env'', ''SENA_GOOGLE_MAPS_API_KEY'') }}'
+
+# Merge runtime values; migrations run only in the dedicated service.
+app_environment_variables: >-
+  {{ app_environment_defaults | combine(app_environment_overrides) |
+     combine(app_secret_environment) |
+     combine({'APP_ENV': app_environment, 'APP_DEBUG': 'false'}) }}

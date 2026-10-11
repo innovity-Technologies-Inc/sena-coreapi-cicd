@@ -1,89 +1,138 @@
-- name: Ensure Docker is installed 
-  command: docker version 
-  changed_when: false 
+---
+- name: Require one explicitly selected manager and complete environment settings
+  ansible.builtin.assert:
+    that:
+      - ansible_play_hosts_all | length == 1
+      - app_environment in ['staging', 'production']
+      - image_tag is defined
+      - image_tag | default('') is match('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$')
+      - image_tag | default('') != 'latest'
+      - app_stack_name is match('^[a-z][a-z0-9-]{0,39}$')
+      - app_environment_variables.DB_CONNECTION == 'pgsql'
+      - app_environment_variables.DB_HOST | length > 0
+      - app_environment_variables.DB_DATABASE | length > 0
+      - app_environment_variables.DB_USERNAME | length > 0
+      - app_environment_variables.DB_PORT | int > 0
+      - app_environment_variables.DB_PORT | int < 65536
+      - app_environment_variables.APP_URL | length > 0
+      - app_environment_variables.CGW_BASE_URL | length > 0
+      - app_environment_variables.ML_BASE_URL | length > 0
+      - app_environment_variables.DB_WAIT_TIMEOUT | int > 0
+      - app_environment_variables.DB_WAIT_TIMEOUT | int < app_migration_timeout | int
+      - app_fpm_port | int == 9000
+      - app_published_port | int > 0 and app_published_port | int < 65536
+      # The image runs one scheduler and queue worker. Scaling requires a worker plan.
+      - app_service_replicas | int == 1
+      - app_migration_timeout | int > 0
+      - app_deployment_timeout | int > 0
+      - app_storage_path is match('^/')
+      - app_environment != 'production' or app_production_inventory_confirmed | default(false) | bool
+    fail_msg: Supply an immutable build tag, complete environment settings, and one confirmed manager.
+  no_log: true
 
-- name: Ensure Docker compose is installed 
-  command: docker compose version 
+- name: Require Jenkins credentials without a repository fallback
+  ansible.builtin.assert:
+    that:
+      - app_harbor_username | length > 0
+      - app_harbor_password | length > 0
+      - app_secret_environment.APP_KEY | length > 0
+      - app_secret_environment.DB_PASSWORD | length > 0
+      - app_secret_environment.CGW_API_TOKEN | length > 0
+      - app_secret_environment.MAIL_PASSWORD | length > 0
+      - app_secret_environment.GOOGLE_MAPS_API_KEY | length > 0
+      - app_environment_overrides.keys() | intersect(app_secret_environment.keys()) | length == 0
+      - app_environment_variables.keys() | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
+      - app_environment_variables.MAIL_MAILER != 'smtp' or app_environment_variables.MAIL_HOST | length > 0
+      - app_environment_variables.MAIL_MAILER != 'smtp' or app_environment_variables.MAIL_USERNAME | length > 0
+      - app_environment_variables.MAIL_FROM_ADDRESS | length > 0
+    fail_msg: Supply the environment-specific Jenkins credentials and mail settings.
+  no_log: true
+
+- name: Check Docker CLI and daemon access
+  ansible.builtin.command:
+    argv: [docker, version]
   changed_when: false
 
-# System Infrastructure 
-- name: Create required Overlay network
-  community.docker.docker_network:
-    name: "{{ shared_network }}"
-    driver: overlay
-    attachable: true
-    state: present
-  run_once: true
-  when: inventory_hostname == "stg-app-01"
+- name: Inspect Swarm state
+  ansible.builtin.command:
+    argv: [docker, info, --format, '{% raw %}{{json .Swarm}}{% endraw %}']
+  register: app_swarm_info
+  changed_when: false
 
-- name: Label Swarm Cluster Nodes for Placement Constraints
-  community.docker.docker_node:
-    hostname: "{{ item.name }}"
-    labels:
-      id: "{{ item.label }}"
-  loop:
-    - { name: 'stg-app-01', label: 'node1' }
-    - { name: 'stg-app-02', label: 'node2' }
-  run_once: true
-  delegate_to: stg-app-01
+- name: Require an active Swarm manager
+  ansible.builtin.assert:
+    that:
+      - (app_swarm_info.stdout | from_json).LocalNodeState == 'active'
+      - (app_swarm_info.stdout | from_json).ControlAvailable | bool
 
-- name: Ensure Base directory exists 
-  file:
-    path: "{{ base_dir }}"
-    state: directory
-    mode: '0755'
-    recurse: yes
+- name: Select the local storage node
+  ansible.builtin.set_fact:
+    app_storage_node_id: '{{ (app_swarm_info.stdout | from_json).NodeID }}'
 
-- name: Ensure nginx directory exists 
-  file:
-    path: "{{ nginx_dir }}"
-    state: directory
-    mode: '0755'
-    recurse: yes
+- name: Inspect storage node availability
+  ansible.builtin.command:
+    argv: [docker, node, inspect, '{{ app_storage_node_id }}']
+  register: app_storage_node_info
+  changed_when: false
+  when: app_pin_storage_to_manager | bool
 
-- name: Ensure nginx logs directory exists 
-  file:
-    path: "{{ nginx_log_dir }}"
-    state: directory
-    mode: '0777'
-    recurse: yes
+- name: Require a ready storage node accepting tasks
+  ansible.builtin.assert:
+    that:
+      - (app_storage_node_info.stdout | from_json)[0].Status.State == 'ready'
+      - (app_storage_node_info.stdout | from_json)[0].Spec.Availability == 'active'
+  when: app_pin_storage_to_manager | bool
 
-- name: Ensure absolute Laravel storage folder skeleton exists with 777 permissions
-  ansible.builtin.file:
-    path: "{{ app_dir }}/{{ item }}"
-    state: directory
-    mode: '0777'
-    recurse: yes
-  loop:
-    - storage
-    - storage/logs
-    - storage/framework
-    - storage/framework/sessions
-    - storage/framework/views
-    - storage/framework/cache
-    - storage/framework/cache/data
-    - storage/app
-    # - storage/app/public
+- name: Inspect application network
+  ansible.builtin.command:
+    argv: [docker, network, inspect, '{{ app_shared_network }}']
+  register: app_swarm_network
+  changed_when: false
 
-# - name: Ensure database  directory exists 
-#   file:
-#     path: "{{ database_dir }}"
-#     state: directory
-#     mode: '0755'
-#     recurse: yes
+- name: Require the existing Swarm overlay network
+  ansible.builtin.assert:
+    that:
+      - (app_swarm_network.stdout | from_json)[0].Driver == 'overlay'
+      - (app_swarm_network.stdout | from_json)[0].Scope == 'swarm'
 
-- name: Ensure php-fpm  directory exists 
-  file:
-    path: "{{ fpm_dir }}"
-    state: directory
-    mode: '0755'
-    recurse: yes
+- name: Check remote Python dependencies used by stack deployment
+  ansible.builtin.command:
+    argv: ["{{ ansible_python_interpreter | default('/usr/bin/python3') }}", -c, 'import jsondiff, yaml']
+  changed_when: false
 
-- name: Ensure third-party-service-simul  directory exists 
-  file:
-    path: "{{ third_party_service_simul }}"
-    state: directory
-    mode: '0755'
-    recurse: yes
+- name: Render application and migration stacks in memory
+  ansible.builtin.set_fact:
+    app_rendered_stack: "{{ lookup('ansible.builtin.template', 'stack.yml.j2') }}"
+    app_rendered_migration: "{{ lookup('ansible.builtin.template', 'migration.yml.j2') }}"
+  no_log: true
 
+- name: Validate both stacks before any deployment changes
+  ansible.builtin.command:
+    argv: [docker, stack, config, --compose-file, '-']
+    stdin: '{{ item }}'
+    stdin_add_newline: false
+  loop: ['{{ app_rendered_stack }}', '{{ app_rendered_migration }}']
+  changed_when: false
+  no_log: true
 
+- name: Inspect retained migration services from previous deployments
+  ansible.builtin.command:
+    argv:
+      - docker
+      - service
+      - ls
+      - --filter
+      - 'name={{ app_stack_name }}-migration-'
+      - --format
+      - '{% raw %}{{.Name}}{% endraw %}'
+  register: app_retained_migrations
+  changed_when: false
+
+- name: Require review of a previous failed migration before retrying
+  ansible.builtin.assert:
+    that:
+      - app_retained_migrations.stdout | trim | length == 0
+    fail_msg: >-
+      Retained migration services exist: {{ app_retained_migrations.stdout_lines }}.
+      Inspect their tasks and database state, then remove the reviewed migration
+      stack with docker stack rm before retrying.

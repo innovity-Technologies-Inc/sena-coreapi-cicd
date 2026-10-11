@@ -1,2 +1,6 @@
-- import_tasks: precheck.yml
-- import_tasks: deploy-app.yml
+---
+- name: Check deployment prerequisites
+  ansible.builtin.import_tasks: precheck.yml
+
+- name: Migrate and deploy application
+  ansible.builtin.import_tasks: deploy-app.yml

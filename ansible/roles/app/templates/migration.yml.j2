@@ -1,0 +1,30 @@
+# Managed by Ansible. Contains credentials; keep mode 0600.
+version: "3.8"
+services:
+  migrate:
+    image: {{ (app_image_registry ~ ':' ~ image_tag) | to_json }}
+    user: "33:33"
+    command: ["php", "artisan", "migrate", "--force", "--no-interaction"]
+    environment:
+{% for key, value in app_environment_variables.items() %}
+      {{ key }}: {{ value | string | replace('$', '$$') | to_json }}
+{% endfor %}
+    volumes:
+      - type: bind
+        source: {{ app_storage_path | to_json }}
+        target: /var/www/html/storage
+    networks:
+      - app_network
+    deploy:
+      replicas: 1
+{% if app_pin_storage_to_manager | bool %}
+      placement:
+        constraints:
+          - {{ ('node.id == ' ~ app_storage_node_id) | to_json }}
+{% endif %}
+      restart_policy:
+        condition: none
+networks:
+  app_network:
+    external: true
+    name: {{ app_shared_network | to_json }}

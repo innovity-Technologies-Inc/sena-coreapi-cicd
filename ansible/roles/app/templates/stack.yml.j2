@@ -1,0 +1,49 @@
+# Swarm application stack managed by Ansible. Contains credentials; keep mode 0600.
+version: "3.8"
+services:
+  senabackend:
+    image: {{ (app_image_registry ~ ':' ~ image_tag) | to_json }}
+    environment:
+{% for key, value in app_environment_variables.items() %}
+      {{ key }}: {{ value | string | replace('$', '$$') | to_json }}
+{% endfor %}
+    ports:
+      - target: {{ app_fpm_port | int }}
+        published: {{ app_published_port | int }}
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - type: bind
+        source: {{ app_storage_path | to_json }}
+        target: /var/www/html/storage
+    networks:
+      - app_network
+    stop_grace_period: 90s
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', {{ app_fpm_port }}) ? 0 : 1);"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: {{ app_healthcheck_start_period | to_json }}
+    deploy:
+      replicas: {{ app_service_replicas | int }}
+{% if app_pin_storage_to_manager | bool %}
+      placement:
+        constraints:
+          - {{ ('node.id == ' ~ app_storage_node_id) | to_json }}
+{% endif %}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+        monitor: 60s
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+networks:
+  app_network:
+    external: true
+    name: {{ app_shared_network | to_json }}

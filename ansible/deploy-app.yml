@@ -1,10 +1,8 @@
-- name:  Deploy Core Api Engine (Docker Compose)
+---
+- name: Deploy Sena Core API to Docker Swarm
   hosts: app
   become: true
-  serial: 1
-
-  #  vars_files:
-  #   - ../vault/docker.yml
-
+  gather_facts: false
+  any_errors_fatal: true
   roles:
     - app

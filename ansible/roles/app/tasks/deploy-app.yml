@@ -1,79 +1,176 @@
-- name: Render Docker Compose file 
-  template:
-    src: docker-compose.yml.j2
-    dest: "{{ base_dir }}/docker-compose.yml"
+---
+- name: Create protected deployment directory separate from shared storage
+  ansible.builtin.file:
+    path: '{{ app_stack_path }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
 
-- name: Copy ENV file
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ app_dir }}/"
-    mode: '0644'
-  loop:
-    - .env
-- name: Copy Nginx files
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ nginx_dir }}/"
-    mode: '0644'
-  loop:
-    - nginx/default.conf
-    - nginx/Dockerfile
+- name: Acquire exclusive deployment lock
+  ansible.builtin.command:
+    argv: [mkdir, '{{ app_stack_path }}/.deploy-lock']
+  changed_when: true
+  # If the controller is killed, inspect migration tasks before removing the lock.
 
-- name: Copy php-fpm files
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ fpm_dir }}/"
-    mode: '0644'
-  loop:
-    - php-fpm/supervisord.conf
-    - php-fpm/Dockerfile
-    - php-fpm/uploads.ini
+- name: Migrate and deploy with isolated registry credentials
+  block:
+    - name: Ensure the existing storage bind mount has Laravel directories
+      ansible.builtin.file:
+        path: '{{ app_storage_path }}/{{ item }}'
+        state: directory
+        mode: '0777'
+      loop:
+        - ''
+        - logs
+        - framework
+        - framework/sessions
+        - framework/views
+        - framework/cache
+        - framework/cache/data
+        - app
+        - app/public
+        - app/private
 
-- name: Authenticate with Harbor Registry via Docker
-  community.docker.docker_login:
-      registry_url: "{{ harbor_registry }}"
-      username: "{{ harbor_username }}"
-      password: "{{ harbor_password }}"
-  
-- name: Check docker-compose containers
-  command: docker compose ps -q
-  args:
-    chdir: "{{ base_dir }}"
-  register: compose_status
-  changed_when: false
-  failed_when: false
-    
-- name: Stop and Clean Running Containers 
-  command: docker compose down --remove-orphans 
-  args:
-    chdir: "{{ base_dir }}"
-  when: compose_status.stdout | length > 0
-    
+    - name: Create temporary Docker credential directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: sena-docker-
+      register: app_docker_auth_directory
 
-# - name: Pull latest images from registries
-#   ansible.builtin.command:
-#     cmd: docker compose pull senabackend db adminer
-#   args:
-#     chdir: "{{ base_dir }}"
+    - name: Authenticate to Harbor without exposing the password
+      ansible.builtin.command:
+        argv: [docker, login, '{{ app_harbor_registry }}', --username, '{{ app_harbor_username }}', --password-stdin]
+        stdin: '{{ app_harbor_password }}'
+        stdin_add_newline: false
+      environment:
+        DOCKER_CONFIG: '{{ app_docker_auth_directory.path }}'
+      changed_when: false
+      no_log: true
 
-# - name: Up the stack and build local Nginx component
-#   ansible.builtin.command:
-#     cmd: docker compose up -d --build
-#   args:
-#     chdir: "{{ base_dir }}"
+    - name: Verify the application image manifest before migration
+      ansible.builtin.command:
+        argv: [docker, manifest, inspect, '{{ app_image_registry }}:{{ image_tag }}']
+      environment:
+        DOCKER_CONFIG: '{{ app_docker_auth_directory.path }}'
+      changed_when: false
+      no_log: true
 
-- name: Pre-compile Local Nginx Web Image Assets
-  community.docker.docker_image:
-    name: sena-nginx
-    tag: latest
-    build:
-      path: "{{ nginx_dir }}"
-    source: build
+    - name: Allocate a unique migration deployment name
+      ansible.builtin.set_fact:
+        app_migration_stack_name: >-
+          {{ app_stack_name }}-migration-{{ lookup('ansible.builtin.password', '/dev/null',
+          length=24, chars=['ascii_lowercase', 'digits']) | hash('sha256') | truncate(12, true, '') }}
 
-- name: Deploy Application Execution Blueprint (sena-app)
-  community.docker.docker_stack:
-    name: sena-app
-    compose: ["{{ base_dir }}/docker-compose.yml"]
-    state: present
-  run_once: true
-  delegate_to: stg-app-01
+    - name: Write validated migration stack with restricted permissions
+      ansible.builtin.copy:
+        content: '{{ app_rendered_migration }}'
+        dest: '{{ app_stack_path }}/migration.yml'
+        owner: root
+        group: root
+        mode: '0600'
+      diff: false
+      no_log: true
+
+    - name: Start one migration task with automatic restarts disabled
+      community.docker.docker_stack:
+        name: '{{ app_migration_stack_name }}'
+        compose: ['{{ app_stack_path }}/migration.yml']
+        state: present
+        with_registry_auth: true
+        resolve_image: always
+      environment:
+        DOCKER_CONFIG: '{{ app_docker_auth_directory.path }}'
+      no_log: true
+
+    - name: Require migration completion with exit code zero
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_python_interpreter | default('/usr/bin/python3') }}"
+          - '-'
+          - migration
+          - --timeout
+          - '{{ app_migration_timeout | string }}'
+          - '{{ app_migration_stack_name }}_migrate'
+        stdin: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../scripts/swarm_wait.py') }}"
+      changed_when: false
+
+    - name: Remove the successful migration service
+      community.docker.docker_stack:
+        name: '{{ app_migration_stack_name }}'
+        state: absent
+
+    - name: Write validated application stack with restricted permissions
+      ansible.builtin.copy:
+        content: '{{ app_rendered_stack }}'
+        dest: '{{ app_stack_path }}/stack.yml'
+        owner: root
+        group: root
+        mode: '0600'
+      diff: false
+      no_log: true
+
+    - name: Deploy the application and remove the retired container nginx service
+      community.docker.docker_stack:
+        name: '{{ app_stack_name }}'
+        compose: ['{{ app_stack_path }}/stack.yml']
+        state: present
+        prune: true
+        with_registry_auth: true
+        resolve_image: always
+      environment:
+        DOCKER_CONFIG: '{{ app_docker_auth_directory.path }}'
+      no_log: true
+
+    - name: Require application service convergence
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_python_interpreter | default('/usr/bin/python3') }}"
+          - '-'
+          - convergence
+          - --timeout
+          - '{{ app_deployment_timeout | string }}'
+          - --image
+          - '{{ app_image_registry }}:{{ image_tag }}'
+          - '{{ app_stack_name }}_senabackend'
+        stdin: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../scripts/swarm_wait.py') }}"
+      changed_when: false
+
+    - name: Remove the obsolete host environment file after successful deployment
+      ansible.builtin.file:
+        path: '{{ app_dir }}/.env'
+        state: absent
+
+  rescue:
+    - name: Stop a retained migration task after failure or timeout
+      ansible.builtin.command:
+        argv: [docker, service, scale, '{{ app_migration_stack_name }}_migrate=0']
+      when: app_migration_stack_name is defined
+      register: app_stopped_migration
+      changed_when: app_stopped_migration.rc == 0
+      failed_when: false
+
+    - name: Report deployment failure without printing credential configuration
+      ansible.builtin.fail:
+        msg: >-
+          Deployment failed. Application updates only run after migration success.
+          If created, migration tasks are retained under
+          {{ app_migration_stack_name | default('no migration stack created') }}.
+          Inspect docker service ps --no-trunc and service logs on the manager.
+          Database migrations are not automatically rolled back.
+  always:
+    - name: Remove temporary registry credentials
+      ansible.builtin.file:
+        path: '{{ app_docker_auth_directory.path }}'
+        state: absent
+      when: app_docker_auth_directory.path is defined
+
+    - name: Remove transient migration configuration
+      ansible.builtin.file:
+        path: '{{ app_stack_path }}/migration.yml'
+        state: absent
+
+    - name: Release deployment lock
+      ansible.builtin.file:
+        path: '{{ app_stack_path }}/.deploy-lock'
+        state: absent

@@ -1,13 +1,25 @@
-# environment: prod
-DB_USER: cgw
-DB_PASSWORD: "#password#"
-DB_NAME: cgw
-DB_PORT: 5432
-docker_registry: zhddoc
-image_tag: latest
-compose_path: /opt/cgw
-COMPOSITION_PORT: 8087
-RENEWAL_PORT: 8081
-NOTIFICATION_PORT: 8082
-docker_username: zhddoc
-docker_password: "Zahid1982"
+---
+# Deployment environment and inventory confirmation.
+app_environment: production
+app_production_inventory_confirmed: false
+
+# Fill these production settings and confirm the inventory before deployment.
+app_environment_overrides:
+  # Application identity and locale.
+  APP_URL: ''
+
+  # PostgreSQL connection and startup wait.
+  DB_HOST: ''
+  DB_DATABASE: sena
+  DB_USERNAME: sena
+
+  # Outbound mail.
+  MAIL_HOST: ''
+  MAIL_USERNAME: ''
+  MAIL_FROM_ADDRESS: ''
+
+  # Charging gateway endpoint.
+  CGW_BASE_URL: ''
+
+  # ML endpoint, retries, and feature flags.
+  ML_BASE_URL: ''

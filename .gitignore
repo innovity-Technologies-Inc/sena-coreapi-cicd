@@ -1,0 +1,6 @@
+# Local deployment tests.
+/tests/
+
+# Python bytecode.
+__pycache__/
+*.py[cod]

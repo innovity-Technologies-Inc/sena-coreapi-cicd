@@ -1,3 +1,11 @@
+def harborCredentialBinding() {
+    return usernamePassword(
+        credentialsId: 'harbor',
+        usernameVariable: 'HARBOR_USER',
+        passwordVariable: 'HARBOR_PASSWORD'
+    )
+}
+
 pipeline {
     agent any
 
@@ -5,135 +13,125 @@ pipeline {
         timestamps()
         skipDefaultCheckout()
         disableConcurrentBuilds()
+        timeout(time: 120, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
+    parameters {
+        choice(
+            name: 'APP_BRANCH',
+            choices: ['staging', 'master'],
+            description: 'staging deploys staging; master deploys production'
+        )
     }
 
     environment {
         APP_BASE_DIR = 'core-api'
-        DOCKER_BUILDKIT = '1'
         APP_REPO_URL = 'git@github.com:innovity-technologiesinc/sena-project.git'
-        IMAGE_URL= "imageregistry.gen-itech.com"
-        IMAGE_REPO = "senacoreapi/coreapi"
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
-        DOCKERFILE_PATH = "core-api"
-        DOCKERFILE_SUFFIX = "Dockerfile"
-    }
-
-    // Chose Branch Name 
-    parameters {
-        choice(
-            name: 'APP_BRANCH',
-            choices: ['dev', 'staging', 'master'],
-            description: 'Select the git branch for application to build'
-        )
+        APP_GIT_CREDENTIALS = 'github-access'
+        IMAGE_URL = 'imageregistry.gen-itech.com'
+        IMAGE_REPO = 'senacoreapi/coreapi'
+        DOCKER_BUILDKIT = '1'
+        ANSIBLE_FORCE_COLOR = 'false'
     }
 
     stages {
-
-        stage('Show Branch Selection') {
-            steps {
-                echo "Selected Branch: ${params.APP_BRANCH}"
-            }
-        }
-
-        // Checkout CI/CD Repo
-
-        stage('Checkout CI/CD Repo') {
+        stage('Checkout CI/CD Repository') {
             steps {
                 cleanWs()
-                checkout scm 
+                checkout scm
             }
         }
 
-
-
-        // Checkout Application Repo
-
-        stage('Checkout Application Repo') {
+        stage('Select Environment') {
             steps {
-                dir(env.APP_BASE_DIR) {
-                    git url: APP_REPO_URL, branch: params.APP_BRANCH
+                script {
+                    def environments = [staging: 'staging', master: 'production']
+                    if (!environments.containsKey(params.APP_BRANCH)) {
+                        error('Unsupported application branch; select staging or master')
+                    }
+                    env.DEPLOY_ENV = environments[params.APP_BRANCH]
                 }
             }
         }
 
-
-        // set Environment 
-
-        stage('Set Deployment Environment') {
+        stage('Checkout Application Repository') {
             steps {
-                script {
-                    if (params.APP_BRANCH == 'master') {
-                        env.DEPLOY_ENV = 'production'
-                    } else if (params.APP_BRANCH == 'staging') {
-                        env.DEPLOY_ENV = 'staging'
-                    } else {
-                        params.APP_BRANCH = 'dev'
+                dir(env.APP_BASE_DIR) {
+                    git(
+                        url: env.APP_REPO_URL,
+                        branch: params.APP_BRANCH,
+                        credentialsId: env.APP_GIT_CREDENTIALS
+                    )
+                    script {
+                        def revision = sh(
+                            script: 'git rev-parse --short=12 HEAD',
+                            returnStdout: true
+                        ).trim()
+                        env.IMAGE_TAG = "${env.DEPLOY_ENV}-${env.BUILD_NUMBER}-${revision}"
+                        currentBuild.description = "${env.DEPLOY_ENV}: ${env.IMAGE_TAG}"
                     }
                 }
             }
         }
 
-
-
-        stage('Docker Image Build') {
-
+        stage('Build Application Image') {
             steps {
-                        dir("${env.APP_BASE_DIR}") {
-                            sh """ 
-                            docker build -t ${IMAGE_URL}/${IMAGE_REPO}:${IMAGE_TAG} .
-                            docker tag ${IMAGE_URL}/${IMAGE_REPO}:${IMAGE_TAG} ${IMAGE_URL}/${IMAGE_REPO}:latest
-                            """
-                            //  trivy image --exit-code 1 ${DOCKER_REGISTRY}/composition:${IMAGE_TAG}                           
-                        }
+                dir(env.APP_BASE_DIR) {
+                    sh '''docker build --target prod --file Dockerfile \
+                        --tag "$IMAGE_URL/$IMAGE_REPO:$IMAGE_TAG" .'''
                 }
+            }
         }
 
-        stage('Harbor Login') {
+        stage('Push Application Image') {
             steps {
+                withCredentials([harborCredentialBinding()]) {
+                    sh '''#!/bin/sh
+                        set -eu
+                        set +x
+                        umask 077
+                        sena_docker_config=$(mktemp -d)
+                        trap 'rm -rf "$sena_docker_config"' EXIT
+                        trap 'exit 130' INT
+                        trap 'exit 143' TERM
+                        export DOCKER_CONFIG="$sena_docker_config"
+                        printf '%s' "$HARBOR_PASSWORD" | docker login "$IMAGE_URL" \
+                            --username "$HARBOR_USER" --password-stdin
+                        docker push "$IMAGE_URL/$IMAGE_REPO:$IMAGE_TAG"
+                    '''
+                }
+            }
+        }
 
+        stage('Ansible Deployment') {
+            options {
+                timeout(time: 60, unit: 'MINUTES')
+            }
+            steps {
                 withCredentials([
-                    usernamePassword(
-                        credentialsId: 'harbor',
-                        usernameVariable: 'HARBOR_USER',
-                        passwordVariable: 'HARBOR_PASSWORD'
-                    )
+                    harborCredentialBinding(),
+                    string(credentialsId: "sena-${env.DEPLOY_ENV}-app-key", variable: 'SENA_APP_KEY'),
+                    string(credentialsId: "sena-${env.DEPLOY_ENV}-db-password", variable: 'SENA_DB_PASSWORD'),
+                    string(credentialsId: "sena-${env.DEPLOY_ENV}-cgw-api-token", variable: 'SENA_CGW_API_TOKEN'),
+                    string(credentialsId: "sena-${env.DEPLOY_ENV}-mail-password", variable: 'SENA_MAIL_PASSWORD'),
+                    string(credentialsId: "sena-${env.DEPLOY_ENV}-google-maps-api-key", variable: 'SENA_GOOGLE_MAPS_API_KEY')
                 ]) {
-
-                    sh """
-                    echo \$HARBOR_PASSWORD | docker login ${env.IMAGE_URL} \
-                    -u \$HARBOR_USER \
-                    --password-stdin
-                    """
+                    sh 'sh scripts/deploy-from-jenkins.sh'
                 }
             }
         }
-
-
-     // Docker push Images
-        stage('Push Docker Image') {
-            steps {
-                    sh """
-                    docker push ${IMAGE_URL}/${IMAGE_REPO}:${IMAGE_TAG}
-                    docker push ${IMAGE_URL}/${IMAGE_REPO}:latest
-                    """
-                }
-            }
-
-                // Deploy Using Ansible & Docker Compose 
-
-        stage('Deploy using Ansible') {
-            steps {
-                sh """
-                ansible-playbook \
-                  -i ansible/inventory/${DEPLOY_ENV}.ini \
-                  ansible/deploy-app.yml \
-                  -e image_tag=latest
-                """
-            }
-        }
-
     }
 
+    post {
+        success {
+            echo "Completed ${env.DEPLOY_ENV}: ${env.IMAGE_TAG}"
+        }
+        unsuccessful {
+            echo 'Deployment did not complete. Inspect retained Swarm migration tasks before retrying.'
+        }
+        cleanup {
+            cleanWs(deleteDirs: true, notFailBuild: true)
+        }
+    }
 }
-
-
