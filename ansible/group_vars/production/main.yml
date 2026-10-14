@@ -1,5 +1,5 @@
 ---
-# Deployment environment and inventory confirmation.
+# Deployment environment and inventory confirmation; secrets belong in vault.yml.
 app_environment: production
 app_production_inventory_confirmed: false
 

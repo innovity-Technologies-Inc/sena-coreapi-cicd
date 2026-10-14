@@ -34,8 +34,7 @@ app_harbor_registry: imageregistry.gen-itech.com
 app_harbor_username: '{{ lookup(''ansible.builtin.env'', ''HARBOR_USER'') }}'
 app_harbor_password: '{{ lookup(''ansible.builtin.env'', ''HARBOR_PASSWORD'') }}'
 
-# Jenkins Firebase file and content-versioned Swarm secret.
-app_firebase_key_file: '{{ lookup(''ansible.builtin.env'', ''SENA_FIREBASE_KEY_FILE'') }}'
+# Vault Firebase JSON becomes a content-versioned Swarm secret.
 app_firebase_secret_name: >-
   {{ app_stack_name | truncate(22, true, '') }}-firebase-{{ app_firebase_key_b64 | hash('sha256') | truncate(32, true, '') }}
 
@@ -141,13 +140,8 @@ app_environment_defaults:
 # Environment-specific non-secret settings live in group_vars.
 app_environment_overrides: {}
 
-# Jenkins supplies secrets; no repository credential fallback.
-app_secret_environment:
-  APP_KEY: '{{ lookup(''ansible.builtin.env'', ''SENA_APP_KEY'') }}'
-  DB_PASSWORD: '{{ lookup(''ansible.builtin.env'', ''SENA_DB_PASSWORD'') }}'
-  CGW_API_TOKEN: '{{ lookup(''ansible.builtin.env'', ''SENA_CGW_API_TOKEN'') }}'
-  MAIL_PASSWORD: '{{ lookup(''ansible.builtin.env'', ''SENA_MAIL_PASSWORD'') }}'
-  GOOGLE_MAPS_API_KEY: '{{ lookup(''ansible.builtin.env'', ''SENA_GOOGLE_MAPS_API_KEY'') }}'
+# Required secrets are loaded from the selected environment's encrypted vault.yml.
+app_secret_environment: '{{ vault_app_secrets | default({}) }}'
 
 # Merge runtime values; migrations run only in the dedicated service.
 app_environment_variables: >-

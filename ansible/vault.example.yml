@@ -1,0 +1,17 @@
+---
+# Reference schema only. Create each group_vars/<environment>/vault.yml with
+# ansible-vault create --vault-id <environment>@prompt; enter real values there.
+vault_environment: staging
+
+# Laravel environment secrets; keep values quoted to preserve their types.
+vault_app_secrets:
+  APP_KEY: ''
+  DB_PASSWORD: ''
+  CGW_API_TOKEN: ''
+  MAIL_PASSWORD: ''
+  GOOGLE_MAPS_API_KEY: ''
+
+# Paste the complete service-account JSON, keeping the private_key's JSON escapes.
+# This value becomes a Swarm secret, never an application environment variable.
+vault_firebase_credentials: |
+  {}

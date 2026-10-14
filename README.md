@@ -2,7 +2,7 @@
 
 Jenkins builds and pushes the application repository's production image, or reuses an existing immutable image tag, then deploys it to Docker Swarm through Ansible. One migration task must finish with exit code zero before the app, scheduler, and queue services are updated in either mode.
 
-Jenkins selects the environment through `APP_BRANCH`: `staging` deploys staging and `master` deploys production. `DEPLOY_MODE=build-and-deploy` builds and pushes a new image; `DEPLOY_MODE=redeploy` applies current Ansible settings and Jenkins credentials to an existing image. The verification tests under `tests/` remain local and are not Jenkins stages.
+Jenkins selects the environment through `APP_BRANCH`: `staging` deploys staging and `master` deploys production. `DEPLOY_MODE=build-and-deploy` builds and pushes a new image; `DEPLOY_MODE=redeploy` applies current Ansible settings and Vault secrets to an existing image. The verification tests under `tests/` remain local and are not Jenkins stages.
 
 ## Deployment flow
 
@@ -13,13 +13,13 @@ flowchart TD
     P -->|build-and-deploy| C[Checkout selected Sena branch]
     C --> D[Build production PHP image]
     D --> E[Push build-specific tag to Harbor]
-    E --> F[Ansible prechecks and stack validation]
+    E --> F[Decrypt environment Vault and validate stacks]
     P -->|redeploy| R[Validate existing image tag and environment]
     R --> F
     F --> G[Acquire deployment lock]
     G --> G1[Prepare configured Laravel storage]
     G1 --> H[Registry authentication and manifest check]
-    H --> H1[Create or reuse Firebase secret]
+    H --> H1[Create or reuse Firebase Swarm secret]
     H1 --> I[Run one migration task without restarts]
     I -->|Exit 0| J[Remove successful migration stack]
     I -->|Failure or timeout| K[Stop and retain migration tasks]
@@ -39,7 +39,7 @@ The application stack is `sena-app`. Migration uses a separate, uniquely named `
 | --- | --- | --- |
 | Application branch | `staging` | `master` |
 | Inventory | `ansible/inventory/staging.ini` | `ansible/inventory/production.ini` |
-| Group variables | `ansible/group_vars/staging.yml` | `ansible/group_vars/production.yml` |
+| Group variables | `ansible/group_vars/staging/main.yml` | `ansible/group_vars/production/main.yml` |
 | Manager address | `172.17.0.206` | Existing `172.17.0.239` entry must be verified |
 | Published FastCGI port | `9000` | `9000` |
 | App replicas | `2` | `2` |
@@ -51,7 +51,7 @@ The application stack is `sena-app`. Migration uses a separate, uniquely named `
 
 The role targets exactly one manager. Staging app, scheduler, queue, and migration tasks can run on either configured NFS client node. Production retains its local storage bind mount and manager placement constraint. Both environments run two app replicas, one scheduler replica, and one queue replica; their counts are independent.
 
-Non-secret runtime properties belong in `ansible/group_vars/<environment>.yml` under `app_environment_overrides`. Shared defaults are in `ansible/roles/app/defaults/main.yml`. The final environment combines defaults, environment overrides, and Jenkins secrets, and sets `APP_ENV` and `APP_DEBUG=false`.
+Non-secret runtime properties belong in `ansible/group_vars/<environment>/main.yml` under `app_environment_overrides`. Shared defaults are in `ansible/roles/app/defaults/main.yml`. The final environment combines defaults, environment overrides, and decrypted Vault secrets, and sets `APP_ENV` and `APP_DEBUG=false`.
 
 Production's `APP_URL`, `DB_HOST`, `CGW_BASE_URL`, and `ML_BASE_URL` remain placeholders until its targets are confirmed. Mail settings use the reference Office 365 account and SMTP host. Fill the endpoint settings, confirm the manager address and SSH user in `ansible/inventory/production.ini`, then set `app_production_inventory_confirmed: true` before deploying production.
 
@@ -72,34 +72,94 @@ Configure the Jenkins job as **Pipeline from SCM**, pointing to this repository 
 
 ## Jenkins credentials
 
-Reuse the existing `github-access`, `harbor`, `cgw-<environment>-api-key`, and `cgw-<environment>-firebase` credentials. Create the Sena-specific credentials below. Replace `<environment>` with `staging` or `production` for each environment-specific secret; verify the production CGW Firebase file credential exists before deploying production.
+Reuse the existing `github-access` and `harbor` credentials. Create one Vault password credential for each environment:
 
-| Credential ID | Type | Controller environment variable |
+| Credential ID | Type | Usage |
 | --- | --- | --- |
 | `github-access` | SSH username with private key | Application checkout |
-| `harbor` | Username with password | `HARBOR_USER`, `HARBOR_PASSWORD` |
-| `sena-<environment>-app-key` | Secret text | `SENA_APP_KEY` |
-| `sena-<environment>-db-password` | Secret text | `SENA_DB_PASSWORD` |
-| `cgw-<environment>-api-key` | Secret text | `SENA_CGW_API_TOKEN` |
-| `sena-<environment>-mail-password` | Secret text | `SENA_MAIL_PASSWORD` |
-| `sena-<environment>-google-maps-api-key` | Secret text | `SENA_GOOGLE_MAPS_API_KEY` |
-| `cgw-<environment>-firebase` | Secret file (service-account JSON) | `SENA_FIREBASE_KEY_FILE` |
+| `harbor` | Username with password | Image push and manager registry authentication |
+| `sena-staging-vault-password` | Secret file containing the staging Vault password on one line | `SENA_VAULT_PASSWORD_FILE` during staging deployment |
+| `sena-production-vault-password` | Secret file containing the production Vault password on one line | `SENA_VAULT_PASSWORD_FILE` during production deployment |
 
-Use the application's existing `APP_KEY` so encrypted application data remains readable. Ansible maps the text credentials to `APP_KEY`, `DB_PASSWORD`, `CGW_API_TOKEN`, `MAIL_PASSWORD`, and `GOOGLE_MAPS_API_KEY`.
+The deployment stage binds only Harbor and the selected Vault password file. Application secret values and the Firebase service-account JSON are stored together in the environment's fully encrypted `vault.yml`. The Jenkins password files are not sent to Swarm nodes or included in the image.
 
-The existing CGW API-key credential supplies Laravel's `CGW_API_TOKEN`; a separate Sena CGW-token credential is unnecessary. Both environments use `cattleinsurance@digicontechnologies.com` as the mail username and sender address.
+For local use, keep `sena-staging.vault-password` and `sena-production.vault-password` at the repository root. Both filenames are ignored by Git. Generate each once with owner-only permissions; these commands refuse to overwrite existing files:
 
-Git and Harbor credentials are shared. Deployment SSH uses the inventory user and the Jenkins system user's existing SSH key or agent; the pipeline does not bind a deployment SSH or sudo-password credential. Verify the manager fingerprint through a trusted connection before populating `known_hosts`.
+```sh
+(
+  set -eC
+  umask 077
+  openssl rand -base64 48 > sena-staging.vault-password
+  openssl rand -base64 48 > sena-production.vault-password
+)
+```
+
+Upload each file into its matching Jenkins Secret file credential. Keep a secure backup because Git does not store these passwords. To use the local password file, replace `staging@prompt` in the commands below with `staging@./sena-staging.vault-password`; use `production@./sena-production.vault-password` for production.
+
+Deployment SSH uses the inventory user and the Jenkins system user's existing SSH key or agent; the pipeline does not bind a deployment SSH or sudo-password credential. Verify the manager fingerprint through a trusted connection before populating `known_hosts`.
+
+## Vault secrets and lifecycle
+
+Each environment has a `main.yml` for non-secret configuration and a fully encrypted `vault.yml` for secrets. The inventory selects the environment group, so Ansible loads only that environment's variables. Use distinct passwords and matching Vault IDs (`staging` or `production`); `ansible.cfg` enables strict Vault ID matching. The deployment wrapper rejects a missing, plaintext, or differently labeled Vault file before running Ansible. Wrong passwords fail during variable loading, before deployment changes.
+
+Create the encrypted files from the repository root:
+
+```sh
+ansible-vault create --vault-id staging@prompt ansible/group_vars/staging/vault.yml
+ansible-vault create --vault-id production@prompt ansible/group_vars/production/vault.yml
+```
+
+Use `ansible/vault.example.yml` as the schema. Enter the following structure inside the Vault editor with real values; the example's empty values cannot deploy:
+
+```yaml
+vault_environment: staging
+vault_app_secrets:
+  APP_KEY: 'existing-application-key'
+  DB_PASSWORD: 'database-password'
+  CGW_API_TOKEN: 'charging-gateway-api-key'
+  MAIL_PASSWORD: 'mail-password'
+  GOOGLE_MAPS_API_KEY: 'maps-api-key'
+vault_firebase_credentials: |
+  {
+    "type": "service_account",
+    "project_id": "firebase-project-id",
+    "private_key": "complete private key with JSON newline escapes",
+    "client_email": "service-account-email"
+  }
+```
+
+Paste the complete Firebase service-account JSON, including all of its original fields. The JSON is a YAML block string; keep the private key's JSON `\n` escapes rather than replacing them with literal newlines inside JSON quotes. Set `vault_environment: production` in the production file. Keep all app-secret values quoted so they remain strings. Preserve the application's existing `APP_KEY` so encrypted application data remains readable.
+
+Editing, adding, changing, or removing values all use `edit`. Vault re-encrypts the file when the editor closes:
+
+```sh
+ansible-vault edit --vault-id staging@prompt ansible/group_vars/staging/vault.yml
+ansible-vault view --vault-id staging@prompt ansible/group_vars/staging/vault.yml
+```
+
+`view` prints decrypted values to the terminal. New keys under `vault_app_secrets` are passed to the Laravel environment; add matching application configuration and any required validation when introducing a new secret. Required secrets cannot be removed without updating the application and its deployment checks.
+
+Commit the encrypted file after a change, publish the CI/CD revision used by Jenkins, then use `DEPLOY_MODE=redeploy` with the currently deployed image tag. No image rebuild is required for secret-value changes. Coordinate database, mail, and API credential changes with their providers; changing a Vault value does not rotate the provider credential.
+
+Rotate the Vault encryption password with:
+
+```sh
+ansible-vault rekey --vault-id staging@prompt --new-vault-id staging@prompt ansible/group_vars/staging/vault.yml
+```
+
+Enter the old and new passwords, commit the re-encrypted file, and coordinate updating the matching Jenkins password credential and local password file before another deployment. Rekeying preserves application secrets and Firebase JSON. Old Git revisions require the old password; rekeying does not revoke old application credentials. Password files remain local and untracked. Encrypted Vault files belong in Git; local password filenames matching `.vault-password*` or `*.vault-password` are ignored.
+
+The deployment wrapper uses `--vault-id "$DEPLOY_ENV@$SENA_VAULT_PASSWORD_FILE"`; only the password-file path appears on the command line. Interactive deployments can use `--vault-id staging@prompt` or `--vault-id production@prompt` with the manual playbook commands below.
+
+The CGW API key and Firebase JSON no longer come from shared CGW Jenkins credentials in this pipeline. Keep their Vault values aligned with the charging gateway and Firebase project when rotating shared credentials; updating the old Jenkins credentials does not change Sena's Vault.
 
 ## Runtime secrets
 
-Stack files contain runtime credentials and are written under `/opt/core-api/deploy` with restricted permissions. Secrets are excluded from Ansible output and command-line extra variables.
+Vault encrypts repository content. Decrypted text secrets remain explicit service environment variables in the rendered stack and are visible to privileged Docker inspection. Stack files are root-owned with mode `0600`; the deployment directory is mode `0700` and separate from shared storage. Secret-bearing tasks use `no_log`, stack copies disable diff output, and temporary registry credentials and migration configuration are removed on normal completion or handled failure.
 
-Text credentials are explicit service environment variables rendered into the stack. They remain visible to privileged Docker inspection. Stack files are root-owned with mode `0600`; the deployment directory is mode `0700` and separate from shared storage. Temporary Docker credentials and migration configuration are removed on normal completion or handled failure.
+Firebase JSON is read from the decrypted Vault variable, validated, and sent through standard input to create a content-versioned Swarm secret. Ansible does not write an intermediate plaintext Firebase file on the controller. The app, scheduler, queue, and migration services mount it read-only at `/var/www/html/firebase-credentials.json`, with UID/GID `33:33` and mode `0400`. `FIREBASE_CREDENTIALS=firebase-credentials.json` remains compatible with Laravel's `base_path()` lookup. The JSON is kept outside public storage and is not copied to NFS or included in the stack environment. Changing Firebase content creates a new secret version; changing only the Vault password does not. Old secret versions are retained for rollback; remove only versions no longer used by deployments or retained migration services.
 
-The Firebase file credential is validated on the controller and sent through standard input to create a content-versioned Swarm secret, following the CGW deployment pattern. The app, scheduler, queue, and migration services mount it read-only at `/var/www/html/firebase-credentials.json`, with UID/GID `33:33` and mode `0400`. `FIREBASE_CREDENTIALS=firebase-credentials.json` remains compatible with Laravel's `base_path()` lookup. The JSON is kept outside public storage and is not copied to NFS or included in the stack environment. Old secret versions are retained for rollback; remove only versions no longer needed by deployments or retained migration services.
-
-The application must read `project_id` from this JSON; a separate `FIREBASE_PROJECT_ID` is not supplied. Shared non-secret settings live in `ansible/roles/app/defaults/main.yml`, with endpoint and diagnostic overrides in each environment's group vars. Staging retains debug logging; production uses info logging. Pulse is disabled in both environments as in the reference file. `SANCTUM_STATEFUL_DOMAINS` is `agrotech.digicontechnologies.com` for staging and `mci.siplc.org` for production. `LOG_VIEWER_PASSWORD` is deliberately omitted for both environments. The local `env.production` reference is not deployed; its `APP_ENV=local` and `APP_DEBUG=true` are replaced by the selected environment and `APP_DEBUG=false`.
+The application reads `project_id` from this JSON; a separate `FIREBASE_PROJECT_ID` is not supplied. Non-secret properties belong in each environment's `main.yml` and shared role defaults. Staging retains debug logging; production uses info logging. Pulse remains disabled in both environments. `SANCTUM_STATEFUL_DOMAINS` is `agrotech.digicontechnologies.com` for staging and `mci.siplc.org` for production. `LOG_VIEWER_PASSWORD` is omitted for both environments. Both use `cattleinsurance@digicontechnologies.com` as the mail username and sender address. `APP_ENV` follows the selected environment and `APP_DEBUG=false`.
 
 ## Required application image support
 
@@ -143,7 +203,7 @@ In **Build with Parameters**, select `APP_BRANCH=staging` for staging or `APP_BR
 
 Every run checks out the CI/CD repository at the job's configured SCM revision. Redeploy skips application checkout, Docker build, and image push. Its tag must match the selected environment's `ENVIRONMENT-BUILD-REVISION` format, with a positive build number, a lowercase hexadecimal revision of 7–40 characters, and no more than 128 characters overall. Empty tags, `latest`, image URLs, and tags from the other environment are rejected before deployment. The existing manager-side manifest check verifies the selected image exists and is accessible before migration.
 
-For a credentials or runtime variable change, start a new run with `DEPLOY_MODE=redeploy` and supply the currently deployed tag. Bindings load the current Jenkins credentials, including the Firebase file. Publish Ansible changes to the CI/CD branch configured by the job before starting the run. Use a new parameterized run; Jenkins's **Restart from Stage** retains the original run's SCM revision and parameters.
+For a Vault secret or runtime variable change, start a new run with `DEPLOY_MODE=redeploy` and supply the currently deployed tag. Jenkins binds the current environment Vault password and Ansible decrypts its app secrets and Firebase JSON. Publish Ansible changes to the CI/CD branch configured by the job before starting the run. Use a new parameterized run; Jenkins's **Restart from Stage** retains the original run's SCM revision and parameters.
 
 Redeploy uses the same migration gate, Firebase secret provisioning, storage handling, and convergence checks as a new-image deployment. It runs one migration task even if the selected image has no pending migrations. Changed service environment values or Firebase mounts update the app task; identical service settings do not force a restart. Keep deployed tags immutable in Harbor so reusing a tag selects the same image contents.
 
@@ -266,40 +326,34 @@ sudo ufw allow from 172.17.0.206 to 172.17.0.206 port 2049 proto tcp
 
 Apply equivalent rules if another firewall is used. Only the manager runs `nfs-kernel-server` and `exportfs`; the worker requires the NFS client package.
 
-The staging settings are in `ansible/group_vars/staging.yml`: `app_storage_backend: nfs`, the server and export path, and the shared volume name. Docker uses `nfsvers=4,rw,hard`. Manual Docker volume creation and host `fstab` entries are unnecessary for this deployment path; Ansible and the stack declarations manage the volume. Keep eligible nodes limited to the configured NFS clients.
+The staging settings are in `ansible/group_vars/staging/main.yml`: `app_storage_backend: nfs`, the server and export path, and the shared volume name. Docker uses `nfsvers=4,rw,hard`. Manual Docker volume creation and host `fstab` entries are unnecessary for this deployment path; Ansible and the stack declarations manage the volume. Keep eligible nodes limited to the configured NFS clients.
 
 ## Manual Ansible commands
 
 Use the controller's installed `ansible-playbook` and collections. Run from the repository root so `ansible.cfg` is loaded.
 
-Supply credentials through these controller environment variables, or equivalent protected Ansible variables:
+Supply Harbor credentials through these controller environment variables, or equivalent protected Ansible variables. App secrets and Firebase JSON are loaded from the selected environment's encrypted Vault file:
 
 | Controller environment variable | Application or role variable |
 | --- | --- |
 | `HARBOR_USER` | `app_harbor_username` |
 | `HARBOR_PASSWORD` | `app_harbor_password` |
-| `SENA_APP_KEY` | `app_secret_environment.APP_KEY` |
-| `SENA_DB_PASSWORD` | `app_secret_environment.DB_PASSWORD` |
-| `SENA_CGW_API_TOKEN` | `app_secret_environment.CGW_API_TOKEN` |
-| `SENA_MAIL_PASSWORD` | `app_secret_environment.MAIL_PASSWORD` |
-| `SENA_GOOGLE_MAPS_API_KEY` | `app_secret_environment.GOOGLE_MAPS_API_KEY` |
-| `SENA_FIREBASE_KEY_FILE` | `app_firebase_key_file` (controller path to the service-account JSON) |
 
 Do not put passwords or API keys in command-line extra vars. The Jenkins helper passes only non-secret image settings; SSH and sudo use the host configuration and inventory. Unattended Jenkins deployment needs passwordless sudo or a root connection. Interactive local deployment can use `--ask-become-pass`.
 
 Syntax and task listing:
 
 ```sh
-ansible-playbook -i ansible/inventory/staging.ini ansible/deploy-app.yml --syntax-check
-ansible-playbook -i ansible/inventory/production.ini ansible/deploy-app.yml --syntax-check
-ansible-playbook -i ansible/inventory/staging.ini ansible/deploy-app.yml --list-tasks
+ansible-playbook -i ansible/inventory/staging.ini ansible/deploy-app.yml --vault-id staging@prompt --syntax-check
+ansible-playbook -i ansible/inventory/production.ini ansible/deploy-app.yml --vault-id production@prompt --syntax-check
+ansible-playbook -i ansible/inventory/staging.ini ansible/deploy-app.yml --vault-id staging@prompt --list-tasks
 ```
 
 A manual deployment uses an existing image build tag:
 
 ```sh
 ansible-playbook -i ansible/inventory/staging.ini ansible/deploy-app.yml \
-  -e image_tag=staging-42-abc123def456 --ask-become-pass
+  --vault-id staging@prompt -e image_tag=staging-42-abc123def456 --ask-become-pass
 ```
 
 Use the actual tag from Jenkins/Harbor, not this example. Direct deployment assumes the image has already been built and pushed. Jenkins is the normal build-and-deploy path.
@@ -416,6 +470,9 @@ The external overlay network and persisted storage are separate resources. Stack
 
 | Symptom | Check/action |
 | --- | --- |
+| Vault missing, plaintext, or wrong environment | Create a fully encrypted vault.yml with the matching environment ID |
+| Vault decryption fails | Verify the environment password credential and the Vault ID; coordinate rekeyed files with Jenkins password updates |
+| Required Vault values or Firebase JSON invalid | Use ansible-vault edit to complete the app-secret mapping and service-account JSON |
 | Missing image or registry authentication | Verify the manifest, Harbor permissions, and node connectivity; deploy through Ansible so registry auth is forwarded |
 | Host-key verification failed | Verify the manager fingerprint and the `known_hosts` entry for its inventory address |
 | SSH or sudo authentication failed | Verify the inventory user, Jenkins agent key, and passwordless sudo; use `--ask-become-pass` for interactive runs |
@@ -431,11 +488,11 @@ The external overlay network and persisted storage are separate resources. Stack
 | Scheduler or queue repeatedly restarts | Inspect that service's logs, database/cache connectivity, and the selected image's Artisan support |
 | Retained migration blocks deployment | Review its tasks and database state, remove the reviewed migration stack, then retry |
 | Deployment lock exists | Confirm no deployment or migration is active before clearing a stale empty lock |
-| Production precheck fails | Complete verified inventory, runtime settings, confirmation flag, and environment credentials |
+| Production precheck fails | Complete verified inventory, runtime settings, confirmation flag, and environment Vault secrets |
 
 ## Local checks
 
-Use a Python environment with `ansible-core`, Jinja2, and PyYAML installed. The tests include Ansible variable rendering, Firebase validation and rotation, and both storage placement modes.
+Use a Python environment with `ansible-core`, Jinja2, and PyYAML installed. If using pipx, use the Python interpreter shown by `ansible --version` in the command below. The tests include real Vault encryption/decryption and password rekeying, environment isolation, missing/invalid secret rejection, Firebase content preservation and rotation, and both storage placement modes.
 
 ```sh
 SENA_PROJECT_ROOT=/absolute/path/to/sena-project python3 -m unittest discover -s tests -v
@@ -451,8 +508,10 @@ ansible.cfg                        Root Ansible configuration
 ansible/deploy-app.yml              Deployment playbook
 ansible/requirements.yml            Pinned Ansible collections
 ansible/inventory/                  One Swarm manager per environment
-ansible/group_vars/                 Non-secret environment settings
-ansible/roles/app/defaults/main.yml  Shared settings and credential lookups
+ansible/group_vars/staging/         main.yml and encrypted vault.yml
+ansible/group_vars/production/      main.yml and encrypted vault.yml
+ansible/vault.example.yml           Secret schema; no real values
+ansible/roles/app/defaults/main.yml  Shared settings and Vault variable mappings
 ansible/roles/app/tasks/             Prechecks, migration gate, and service deployment
 ansible/roles/app/templates/         stack.yml.j2 and migration.yml.j2
 scripts/deploy-from-jenkins.sh       Passes build settings to Ansible

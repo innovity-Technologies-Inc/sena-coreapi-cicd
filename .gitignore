@@ -4,3 +4,7 @@
 # Python bytecode.
 __pycache__/
 *.py[cod]
+
+# Local Vault password files; encrypted vault.yml files belong in Git.
+.vault-password*
+*.vault-password

@@ -1,5 +1,5 @@
 ---
-# Deployment environment.
+# Deployment environment; encrypted secrets belong in vault.yml beside this file.
 app_environment: staging
 
 # Shared storage exported by the staging manager; tasks can use either NFS client.
