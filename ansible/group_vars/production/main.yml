@@ -7,7 +7,7 @@ app_production_inventory_confirmed: false
 # Fill the endpoint settings and confirm the inventory before deployment.
 app_environment_overrides:
   # Public application endpoint.
-  APP_URL: ''
+  APP_URL: https://mci.siplc.org
 
   # Sanctum stateful frontend domain.
   SANCTUM_STATEFUL_DOMAINS: mci.siplc.org
@@ -19,10 +19,10 @@ app_environment_overrides:
   MAIL_HOST: smtp.office365.com
 
   # Charging gateway endpoint.
-  CGW_BASE_URL: ''
+  CGW_BASE_URL: http://172.17.0.239:8087/api/composition/sena/
 
   # ML endpoint.
-  ML_BASE_URL: ''
+  ML_BASE_URL: http://172.17.0.242:8000/
 
   # Production diagnostics; Pulse stays disabled as in env.production.
   LOG_LEVEL: info
