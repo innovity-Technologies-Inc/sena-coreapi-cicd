@@ -58,7 +58,7 @@ Production's `APP_URL`, `DB_HOST`, `CGW_BASE_URL`, and `ML_BASE_URL` remain plac
 ## Setup
 
 - Jenkins agent: Git, Docker CLI and a running build daemon, Python 3, Ansible, and registry access. The job uses Pipeline, Git, Credentials Binding, Workspace Cleanup, and Timestamper plugins.
-- Deployment target: exactly one active Swarm manager accepting tasks, Docker CLI, Python 3 with `jsondiff` and `PyYAML`, and the existing `sena-overlay-network` Swarm overlay network.
+- Deployment target: exactly one active Swarm manager accepting tasks, Docker CLI, and Python 3 with `jsondiff` and `PyYAML`. The role creates `app_shared_network` (default `sena-overlay-network`) as an overlay network if missing and validates that an existing network uses the overlay driver and Swarm scope.
 - Staging storage: the manager's configured NFS export, `nfs-common` on both eligible nodes, and `www-data` UID/GID `33:33` matching the application image.
 - Configure SSH authentication and non-interactive privilege escalation for the inventory user. The root `ansible.cfg` verifies SSH host keys; provision the manager's verified host key in the agent's `known_hosts`.
 
@@ -219,7 +219,7 @@ Both modes follow the deployment steps below:
 
 1. Build-and-deploy checks out the selected application branch and builds the Dockerfile's `prod` target. Redeploy validates and selects the supplied tag.
 2. Build-and-deploy pushes the build tag using temporary registry credentials. Redeploy reuses the image already in Harbor.
-3. Ansible validates the environment, manager, network, and both stack templates before deployment changes.
+3. Ansible validates the environment and manager, creates the shared overlay network if missing, validates its driver and scope, and checks both stack templates before deploying services.
 4. It acquires a deployment lock, prepares Laravel storage directories, and creates staging's NFS-backed Docker volume on the manager if absent. Existing manager volumes must match the configured NFS options. It creates or reuses the content-versioned Firebase secret, then runs one uniquely named migration task using the same image, secret, and storage as the app. The task runs `php artisan migrate --force --no-interaction` with automatic restarts disabled.
 5. After migration success, it removes the migration service, deploys the app, scheduler, and queue services, prunes retired services, and waits for all three services to converge on the requested build.
 6. It removes the obsolete host `.env` file after successful convergence. Temporary registry credentials, migration configuration, and the lock are cleaned up on success or failure.
@@ -477,7 +477,7 @@ The external overlay network and persisted storage are separate resources. Stack
 | Host-key verification failed | Verify the manager fingerprint and the `known_hosts` entry for its inventory address |
 | SSH or sudo authentication failed | Verify the inventory user, Jenkins agent key, and passwordless sudo; use `--ask-become-pass` for interactive runs |
 | Missing `jsondiff` or `yaml` | Provision the modules for the manager's selected Python interpreter |
-| Overlay network missing or wrong driver | Verify the existing `sena-overlay-network` is a Swarm overlay |
+| Overlay network creation or validation fails | Verify manager permissions and Docker errors; an existing `app_shared_network` must use the overlay driver and Swarm scope |
 | Service task pending on placement | Verify eligible nodes are ready and accepting tasks; production's local storage pins its tasks to the manager |
 | NFS mount or storage permission error | Verify the manager export, client package, TCP port 2049, and matching `www-data` IDs |
 | Existing storage volume has different options | Inspect its configuration and users before reusing the name; Docker does not replace existing volume options |

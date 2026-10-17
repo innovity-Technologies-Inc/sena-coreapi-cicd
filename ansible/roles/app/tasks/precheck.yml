@@ -153,13 +153,25 @@
       - (app_storage_node_info.stdout | from_json)[0].Spec.Availability == 'active'
   when: app_storage_backend == 'bind'
 
+- name: List existing Docker network names
+  ansible.builtin.command:
+    argv: [docker, network, ls, --format, '{% raw %}{{.Name}}{% endraw %}']
+  register: app_existing_networks
+  changed_when: false
+
+- name: Create the shared Swarm overlay network if missing
+  ansible.builtin.command:
+    argv: [docker, network, create, --driver, overlay, '{{ app_shared_network }}']
+  when: app_shared_network not in app_existing_networks.stdout_lines
+  changed_when: true
+
 - name: Inspect application network
   ansible.builtin.command:
     argv: [docker, network, inspect, '{{ app_shared_network }}']
   register: app_swarm_network
   changed_when: false
 
-- name: Require the existing Swarm overlay network
+- name: Require a Swarm overlay network
   ansible.builtin.assert:
     that:
       - (app_swarm_network.stdout | from_json)[0].Driver == 'overlay'
