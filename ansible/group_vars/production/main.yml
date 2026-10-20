@@ -3,6 +3,12 @@
 app_environment: production
 app_production_inventory_confirmed: false
 
+# Shared storage exported by the production NFS server.
+app_storage_backend: nfs
+app_nfs_server: 172.17.0.246
+app_nfs_export_path: /srv/nfs/sena-storage-nfs
+app_storage_volume_name: sena-production-storage
+
 # Production overrides; common runtime settings live in the role defaults.
 # Fill the endpoint settings and confirm the inventory before deployment.
 app_environment_overrides:
