@@ -19,7 +19,7 @@ app_environment_overrides:
   SANCTUM_STATEFUL_DOMAINS: mci.siplc.org
 
   # PostgreSQL endpoint.
-  DB_HOST: ''
+  DB_HOST: 172.17.0.235
 
   # Outbound mail endpoint.
   MAIL_HOST: smtp.office365.com
