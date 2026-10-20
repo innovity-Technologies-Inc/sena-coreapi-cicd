@@ -23,7 +23,7 @@ app_environment_overrides:
   MAIL_HOST: smtp.office365.com
 
   # Charging gateway endpoint.
-  CGW_BASE_URL: http://172.17.0.206:8087/api/composition/sena/
+  CGW_BASE_URL: http://172.17.0.206:8887/api/composition/sena/
 
   # ML endpoint.
   ML_BASE_URL: http://172.17.0.240:8000/
